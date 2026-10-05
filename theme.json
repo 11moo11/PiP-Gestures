@@ -4,7 +4,7 @@
   "description": "Two-finger move and pinch-to-resize for Picture-in-Picture windows, like Arc. Plus an optional goofy gummy mode.",
   "homepage": "https://github.com/11moo11/PiP-Gestures",
   "author": "11moo11",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "createdAt": "2026-10-04",
   "updatedAt": "2026-10-05T00:00:00Z",
   "readme": "https://raw.githubusercontent.com/11moo11/PiP-Gestures/main/README.md",
