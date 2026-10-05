@@ -99,6 +99,59 @@
       g.y = clamp(g.y, top, top + sc.availHeight - margin);
     }
 
+    // The OS delivers scroll events to whichever window is under the cursor, so once the
+    // window slides out from under the pointer the gesture would stop. Like Arc, we hide the
+    // cursor while gesturing and keep it at the centre of the window as it moves; when the
+    // gesture ends the cursor reappears at the window's centre.
+    const wu = win.windowUtils;
+    let warpFailed = false;
+    let newSignature = true; // sendNativeMouseEvent(x, y, msg, button, modifiers, element, observer)
+    function warpCursorToCentre() {
+      try {
+        const scale = wu.screenPixelsPerCSSPixel || 1;
+        // Use the window's actual position (not our target) so the cursor never gets ahead of it.
+        const x = (win.screenX + win.outerWidth / 2) * scale;
+        const y = (win.screenY + win.outerHeight / 2) * scale;
+        const el = doc.documentElement;
+        const MOVE = Ci.nsIDOMWindowUtils.NATIVE_MOUSE_MESSAGE_MOVE;
+        if (newSignature) {
+          try {
+            wu.sendNativeMouseEvent(x, y, MOVE, 0, 0, el, null);
+            return;
+          } catch (e) {
+            newSignature = false; // older Firefox without the button argument
+          }
+        }
+        wu.sendNativeMouseEvent(x, y, MOVE, 0, el, null);
+      } catch (e) {
+        if (!warpFailed) {
+          warpFailed = true;
+          log("could not move the cursor: " + e, true);
+        }
+      }
+    }
+
+    let gesturing = false;
+    let idleTimer = null;
+    function endGesture() {
+      gesturing = false;
+      idleTimer = null;
+      warpCursorToCentre();
+      doc.documentElement.style.cursor = "";
+      view.style.pointerEvents = "";
+    }
+    function touchGesture() {
+      if (!gesturing) {
+        gesturing = true;
+        warpCursorToCentre();
+        // Let the chrome document (not the video's own process) decide the cursor, then hide it.
+        view.style.pointerEvents = "none";
+        doc.documentElement.style.cursor = "none";
+      }
+      if (idleTimer) win.clearTimeout(idleTimer);
+      idleTimer = win.setTimeout(endGesture, 200);
+    }
+
     function commit(resized) {
       keepOnScreen();
       try {
@@ -107,6 +160,7 @@
       } catch (e) {
         log("move/resize failed: " + e, true);
       }
+      if (gesturing) warpCursorToCentre();
     }
 
     // Resize by `factor` around the window's centre.
@@ -138,6 +192,7 @@
         }
         e.preventDefault();
         e.stopPropagation();
+        touchGesture();
         if (e.ctrlKey) {
           // Pinch out -> negative deltaY -> bigger window.
           resizeBy(Math.exp(-e.deltaY * 0.005 * pinchSpeed()));
