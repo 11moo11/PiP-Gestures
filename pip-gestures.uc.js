@@ -29,6 +29,11 @@
     minWidth: 200,      // px - smallest the window can be pinched down to
     hideCursor: true,   // hide the cursor and carry it along with the window during a gesture
     holdMs: 600,        // ms - how long resting fingers can pause mid-move before the cursor returns
+    gummy: false,       // goofy gummy mode: the window peels, stretches, bounces and wobbles
+    gummyStretch: 100,  // % - how far the trailing sides peel back when you move fast
+    gummySpring: 100,   // % - springiness: higher = looser, longer wobble
+    gummyBounce: 70,    // % - how much speed is kept when bouncing off a screen edge (0 = just squish)
+    gummyFriction: 100, // % - how quickly a thrown window slows down (higher = stops sooner)
   };
 
   const P = Services.prefs;
@@ -108,6 +113,99 @@
 
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
+  // ---- Gummy physics (pure functions, no DOM) ------------------------------------------------
+  // The window is modelled as a rigid "body" (the rect the fingers and momentum drive) plus four
+  // independently sprung edges that chase it. Trailing edges are softer than leading ones, so a fast
+  // move stretches the window backwards ("peels"); when the body hits a wall the leading edge is held
+  // at the wall while the trailing edge keeps coming (a squash), then everything springs back.
+  // <physics>
+  const GUMMY_MIN_BOUNCE_V = 120; // px/s - slower impacts just stop instead of bouncing
+  const GUMMY_MIN_SIZE = 80;      // px - the squash never collapses a window below this
+  const GUMMY_MAX_V = 6000;       // px/s
+
+  function gummyParams(get) {
+    const spring = clamp(get("gummySpring") / 100, 0.3, 3);
+    return {
+      omega: 22 / Math.sqrt(spring),             // rad/s - how fast edges chase their target
+      zeta: clamp(0.28 / spring, 0.08, 0.9),     // damping ratio: lower = more wobble
+      stretch: clamp(get("gummyStretch") / 100, 0, 3),
+      restitution: clamp(get("gummyBounce") / 100, 0, 0.95),
+      friction: 2.5 * clamp(get("gummyFriction") / 100, 0.1, 5), // 1/s
+    };
+  }
+
+  // Keep one axis of the body inside [lo, hi]. Returns the new velocity and whether it bounced.
+  function gummyCollideAxis(pos, vel, lo, hi, restitution) {
+    if (pos < lo) {
+      if (vel >= 0) return { pos: lo, vel, bounced: false };
+      const bounced = -vel > GUMMY_MIN_BOUNCE_V && restitution > 0;
+      return { pos: lo, vel: bounced ? -vel * restitution : 0, bounced };
+    }
+    if (pos > hi) {
+      if (vel <= 0) return { pos: hi, vel, bounced: false };
+      const bounced = vel > GUMMY_MIN_BOUNCE_V && restitution > 0;
+      return { pos: hi, vel: bounced ? -vel * restitution : 0, bounced };
+    }
+    return { pos, vel, bounced: false };
+  }
+
+  // Clamp the body rect g ({x, y}) into bounds b ({minX, maxX, minY, maxY}), reflecting bv.
+  function gummyCollide(g, bv, b, restitution) {
+    const cx = gummyCollideAxis(g.x, bv.x, b.minX, b.maxX, restitution);
+    const cy = gummyCollideAxis(g.y, bv.y, b.minY, b.maxY, restitution);
+    g.x = cx.pos; bv.x = cx.vel;
+    g.y = cy.pos; bv.y = cy.vel;
+    return cx.bounced || cy.bounced;
+  }
+
+  // Free flight of the body: friction, then walls.
+  function gummyFly(g, bv, b, pr, h) {
+    const f = Math.exp(-pr.friction * h);
+    bv.x *= f;
+    bv.y *= f;
+    g.x += bv.x * h;
+    g.y += bv.y * h;
+    return b ? gummyCollide(g, bv, b, pr.restitution) : false;
+  }
+
+  // lim: how far (px) an edge may stray from its rigid target in either direction (peel or squash).
+  function gummySpringEdge(e, target, omega, zeta, lim, h) {
+    e.v += (omega * omega * (target - e.p) - 2 * zeta * omega * e.v) * h;
+    e.p += e.v * h;
+    if (e.p > target + lim) { e.p = target + lim; if (e.v > 0) e.v = 0; }
+    else if (e.p < target - lim) { e.p = target - lim; if (e.v < 0) e.v = 0; }
+  }
+
+  // One axis of the sprung rect: lo/hi are edges {p, v}, tLo/tHi the rigid targets, bodyV the body's
+  // velocity along this axis (it decides which edge is trailing), wallLo/wallHi optional hard walls.
+  function gummySpringAxis(lo, hi, tLo, tHi, bodyV, wallLo, wallHi, pr, h) {
+    const dir = clamp(bodyV / 900, -1, 1);
+    const soft = Math.min(0.9, 0.9 * pr.stretch * Math.abs(dir));
+    const trail = pr.omega * Math.sqrt(1 - soft);
+    // The more "stretch", the further the sides may peel away from the rigid window.
+    const lim = (tHi - tLo) * Math.min(1, 0.12 + 0.4 * pr.stretch);
+    gummySpringEdge(lo, tLo, dir > 0 ? trail : pr.omega, pr.zeta, lim, h);
+    gummySpringEdge(hi, tHi, dir < 0 ? trail : pr.omega, pr.zeta, lim, h);
+    if (wallLo !== null) {
+      if (lo.p < wallLo) { lo.p = wallLo; if (lo.v < 0) lo.v = 0; }
+      if (hi.p > wallHi) { hi.p = wallHi; if (hi.v > 0) hi.v = 0; }
+    }
+    if (hi.p - lo.p < GUMMY_MIN_SIZE) {
+      const mid = (hi.p + lo.p) / 2;
+      lo.p = mid - GUMMY_MIN_SIZE / 2;
+      hi.p = mid + GUMMY_MIN_SIZE / 2;
+      lo.v = hi.v = 0;
+    }
+  }
+
+  // Is everything at rest (body, edges, and no fingers driving)?
+  function gummyCalm(E, targets, bv) {
+    const near = (e, t) => Math.abs(e.p - t) < 0.4 && Math.abs(e.v) < 8;
+    return near(E.L, targets.l) && near(E.R, targets.r) && near(E.T, targets.t) && near(E.B, targets.b) &&
+      Math.abs(bv.x) < 8 && Math.abs(bv.y) < 8;
+  }
+  // </physics>
+
   function isPipWindow(win) {
     try {
       return PIP_URL.test(win.location.href);
@@ -137,9 +235,33 @@
     const IDLE_MS = 250;
     const g = { x: 0, y: 0, w: 0, h: 0, aspect: 1, t: 0 };
 
+    // Gummy mode state (see the physics block at the top of the file). While the loop runs, `g` is
+    // the rigid rect the fingers/momentum drive and the real window is the sprung rect GM.E.
+    const GM = {
+      running: false,
+      raf: 0,
+      startT: 0,
+      lastT: 0,
+      E: { L: { p: 0, v: 0 }, R: { p: 0, v: 0 }, T: { p: 0, v: 0 }, B: { p: 0, v: 0 } },
+      bv: { x: 0, y: 0 },  // velocity of the rigid body, px/s
+      swallow: false,      // a throw is in flight; ignore the trackpad's leftover momentum events
+      lastEvT: 0,          // last time fingers/momentum moved the body
+      lastRawT: 0,
+      lastMag: 0,
+      chromeW: 0,
+      chromeH: 0,
+      pinW: 0,
+      pinH: 0,
+      viewSaved: null,
+      bounces: 0,
+    };
+    const gummyOn = () => pref("gummy");
+    const nowMs = () => win.performance.now();
+
     function sync() {
       const now = Date.now();
-      if (now - g.t > IDLE_MS || !g.w) {
+      // While gummy is animating, the real window is deformed and g is the source of truth.
+      if (!GM.running && (now - g.t > IDLE_MS || !g.w)) {
         g.x = win.screenX;
         g.y = win.screenY;
         g.w = win.outerWidth;
@@ -297,6 +419,12 @@
 
     function endGesture(reason, userTookOver) {
       if (!gesturing) return;
+      if (GM.running && !userTookOver) {
+        // The window is still flying/wobbling; end the gesture (and return the cursor) once it settles.
+        if (idleTimer) win.clearTimeout(idleTimer);
+        idleTimer = win.setTimeout(() => endGesture(reason), 100);
+        return;
+      }
       gesturing = false;
       if (idleTimer) win.clearTimeout(idleTimer);
       idleTimer = null;
@@ -304,7 +432,7 @@
       fading = false;
       // The window has settled by now; park the (still hidden) cursor at the centre of where it
       // ended up, then reveal it a moment later so the jump itself is never seen.
-      settleOnScreen();
+      if (!GM.running) settleOnScreen();
       const a = [g.x + g.w / 2, g.y + g.h / 2];
       log("gesture end (" + (typeof reason === "string" ? reason : "idle") + ") after " + evN + " events; target=(" + Math.round(g.x) + "," + Math.round(g.y) + " " +
         Math.round(g.w) + "x" + Math.round(g.h) + ") actual=(" + win.screenX + "," + win.screenY + " " +
@@ -341,6 +469,10 @@
 
     function commit(resized) {
       keepOnScreen();
+      if (gummyOn()) {
+        gummyStart(); // the loop moves/resizes the window and carries the cursor
+        return;
+      }
       try {
         if (resized) win.resizeTo(Math.round(g.w), Math.round(g.h));
         win.moveTo(Math.round(g.x), Math.round(g.y));
@@ -349,6 +481,144 @@
       }
       // Carry the cursor along with the window so it stays under the pointer's original spot.
       if (gesturing) warpCursor(g.x + curFx * g.w, g.y + curFy * g.h);
+    }
+
+    // ---- Gummy engine -----------------------------------------------------------------------
+    const VIEW_PROPS = ["position", "left", "top", "width", "height", "transformOrigin", "transform"];
+
+    // Pin the video's layout size so that when the window is stretched the picture stretches with it
+    // (otherwise it would just letterbox), then scale it to whatever size the window currently is.
+    function pinView() {
+      GM.viewSaved = {};
+      for (const k of VIEW_PROPS) GM.viewSaved[k] = view.style[k];
+      view.style.position = "absolute";
+      view.style.left = "0px";
+      view.style.top = "0px";
+      view.style.transformOrigin = "0 0";
+      GM.pinW = 0; // forces the size to be applied on the first frame
+      GM.pinH = 0;
+    }
+    function unpinView() {
+      if (!GM.viewSaved) return;
+      for (const k of VIEW_PROPS) view.style[k] = GM.viewSaved[k];
+      GM.viewSaved = null;
+    }
+
+    function gummyStart() {
+      if (GM.running) return;
+      GM.running = true;
+      GM.bounces = 0;
+      const E = GM.E;
+      // Start from the window exactly as it is now (before this event's change to g).
+      E.L.p = win.screenX; E.R.p = win.screenX + win.outerWidth;
+      E.T.p = win.screenY; E.B.p = win.screenY + win.outerHeight;
+      E.L.v = E.R.v = E.T.v = E.B.v = 0;
+      GM.chromeW = win.outerWidth - win.innerWidth;
+      GM.chromeH = win.outerHeight - win.innerHeight;
+      pinView();
+      GM.startT = GM.lastT = nowMs();
+      GM.raf = win.requestAnimationFrame(gummyStep);
+      log("gummy: start");
+    }
+
+    function gummyStop() {
+      GM.running = false;
+      if (GM.raf) win.cancelAnimationFrame(GM.raf);
+      GM.raf = 0;
+      GM.bv.x = GM.bv.y = 0;
+      GM.swallow = false;
+      // Snap to the exact rest geometry and give the video its normal layout back.
+      try {
+        win.resizeTo(Math.round(g.w), Math.round(g.h));
+        win.moveTo(Math.round(g.x), Math.round(g.y));
+      } catch (e) {}
+      unpinView();
+    }
+
+    function gummyStep() {
+      GM.raf = 0;
+      if (!GM.running) return;
+      if (!gummyOn()) {
+        gummyStop();
+        return;
+      }
+      const t = nowMs();
+      const dt = clamp((t - GM.lastT) / 1000, 0.001, 0.05);
+      GM.lastT = t;
+      const pr = gummyParams(pref);
+      // A flight that somehow never settles (extreme settings) gets progressively more friction.
+      if (t - GM.startT > 8000) pr.friction *= 1 + (t - GM.startT - 8000) / 1000;
+      const walls = pref("keepOnScreen") ? windowBounds() : null;
+      const driven = !GM.swallow && t - GM.lastEvT < 40; // fingers (or the OS's momentum) are moving it
+      const E = GM.E;
+      const steps = Math.max(1, Math.ceil(dt / 0.008));
+      const h = dt / steps;
+      for (let i = 0; i < steps; i++) {
+        if (!driven && gummyFly(g, GM.bv, walls, pr, h)) {
+          GM.bounces++;
+          log("gummy: bounce #" + GM.bounces + " v=(" + Math.round(GM.bv.x) + "," + Math.round(GM.bv.y) + ")");
+        }
+        gummySpringAxis(E.L, E.R, g.x, g.x + g.w, GM.bv.x,
+          walls ? walls.minX : null, walls ? walls.maxX + g.w : null, pr, h);
+        gummySpringAxis(E.T, E.B, g.y, g.y + g.h, GM.bv.y,
+          walls ? walls.minY : null, walls ? walls.maxY + g.h : null, pr, h);
+      }
+
+      // Apply the sprung rect to the real window...
+      const l = Math.round(E.L.p);
+      const top = Math.round(E.T.p);
+      const w = Math.round(E.R.p - E.L.p);
+      const hgt = Math.round(E.B.p - E.T.p);
+      try {
+        if (w !== win.outerWidth || hgt !== win.outerHeight) win.resizeTo(w, hgt);
+        if (l !== win.screenX || top !== win.screenY) win.moveTo(l, top);
+      } catch (e) {
+        log("gummy: move/resize failed: " + e, true);
+      }
+      // ...and stretch the picture to match. The pinned layout size is the window's rest size.
+      const restW = Math.max(1, Math.round(g.w - GM.chromeW));
+      const restH = Math.max(1, Math.round(g.h - GM.chromeH));
+      if (restW !== GM.pinW || restH !== GM.pinH) {
+        GM.pinW = restW;
+        GM.pinH = restH;
+        view.style.width = restW + "px";
+        view.style.height = restH + "px";
+      }
+      const sx = win.innerWidth / restW;
+      const sy = win.innerHeight / restH;
+      view.style.transform = Math.abs(sx - 1) < 0.002 && Math.abs(sy - 1) < 0.002 ? "" : "scale(" + sx + "," + sy + ")";
+
+      if (gesturing) warpCursor(E.L.p + curFx * (E.R.p - E.L.p), E.T.p + curFy * (E.B.p - E.T.p));
+
+      const calm = !driven && gummyCalm(E, { l: g.x, r: g.x + g.w, t: g.y, b: g.y + g.h }, GM.bv);
+      if (calm && t - GM.lastEvT > 100) {
+        log("gummy: settled after " + Math.round(t - GM.startT) + "ms, " + GM.bounces + " bounces");
+        gummyStop();
+        return;
+      }
+      GM.raf = win.requestAnimationFrame(gummyStep);
+    }
+
+    // Fingers (or the trackpad's momentum) move the body by (dx, dy).
+    function gummyMove(dx, dy) {
+      sync();
+      const t = nowMs();
+      const gap = t - GM.lastEvT;
+      if (gap > 60) GM.bv.x = GM.bv.y = 0; // a fresh touch grabs the window
+      const dts = clamp(gap, 4, 50) / 1000;
+      GM.bv.x = clamp(GM.bv.x * 0.4 + (dx / dts) * 0.6, -GUMMY_MAX_V, GUMMY_MAX_V);
+      GM.bv.y = clamp(GM.bv.y * 0.4 + (dy / dts) * 0.6, -GUMMY_MAX_V, GUMMY_MAX_V);
+      GM.lastEvT = t;
+      g.x += dx;
+      g.y += dy;
+      if (pref("keepOnScreen") && gummyCollide(g, GM.bv, windowBounds(), gummyParams(pref).restitution)) {
+        // Hit a wall hard enough to bounce: the body is now flying, so ignore the leftover momentum
+        // events (they'd push it back into the wall) until a fresh touch comes along.
+        GM.swallow = true;
+        GM.bounces++;
+        log("gummy: bounce #" + GM.bounces + " v=(" + Math.round(GM.bv.x) + "," + Math.round(GM.bv.y) + ")");
+      }
+      gummyStart();
     }
 
     // Resize by `factor` around the window's centre.
@@ -454,6 +724,22 @@
         e.stopPropagation();
         const mag = e.ctrlKey ? Math.abs(e.deltaY) : Math.hypot(e.deltaX, e.deltaY);
         lastWheelT = Date.now();
+        // Gummy: while a throw is in flight, the trackpad's leftover momentum events are ignored. A
+        // fresh touch (a pinch, a pause, or a jump in size) catches the window.
+        const tRaw = nowMs();
+        const rawGap = tRaw - GM.lastRawT;
+        const prevMag = GM.lastMag;
+        GM.lastRawT = tRaw;
+        GM.lastMag = mag;
+        if (GM.swallow) {
+          if (e.ctrlKey || rawGap > 90 || mag > prevMag * 1.25 + 2) {
+            GM.swallow = false;
+            GM.bv.x = GM.bv.y = 0;
+            log("gummy: caught the flying window");
+          } else {
+            return;
+          }
+        }
         if (takeover) {
           // Keep coasting, but leave the cursor alone.
           if (takeoverTimer) win.clearTimeout(takeoverTimer);
@@ -480,7 +766,8 @@
         const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? win.innerHeight : 1;
         const sp = panSpeed();
         // Window follows the fingers (natural scrolling reports the opposite sign).
-        moveBy(-e.deltaX * unit * sp, -e.deltaY * unit * sp);
+        if (gummyOn()) gummyMove(-e.deltaX * unit * sp, -e.deltaY * unit * sp);
+        else moveBy(-e.deltaX * unit * sp, -e.deltaY * unit * sp);
         logEvent(e);
       },
       { capture: true, passive: false }
@@ -537,5 +824,5 @@
   try {
     P.setCharPref("zen.pipgestures.loaded", new Date().toISOString());
   } catch (e) {}
-  log("PiP Gestures v0.4.0 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
+  log("PiP Gestures v0.5.0 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
 })();
