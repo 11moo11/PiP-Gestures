@@ -11,17 +11,63 @@
   // (Each PiP window is also guarded individually below.)
   const PIP_URL = /pictureinpicture\/player\.xhtml/;
   
-  // Optional about:config prefs (all are created on demand, none are required):
-  //   zen.pipgestures.debug          (bool, default false)  -> logs to Browser Console (Cmd+Shift+J)
-  //   zen.pipgestures.pinchSpeed     (int %, default 100)   -> pinch-to-resize sensitivity
-  //   zen.pipgestures.panSpeed       (int %, default 100)   -> two-finger window-move sensitivity
-  //   zen.pipgestures.holdMs         (int ms, default 600)  -> how long fingers can rest still mid-move
-  //                                                            before the cursor comes back
+  // ---- Settings ------------------------------------------------------------------------------
+  // Every setting lives in about:config under zen.pipgestures.<name>, and is exposed in the Sine mods
+  // page through preferences.json. To add a setting:
+  //   1. add it to DEFAULTS below (the value's type, boolean or integer, is the pref's type),
+  //   2. add a matching entry to preferences.json (same property name and defaultValue),
+  //   3. read it with pref("name") wherever it's needed; changes apply live, no restart needed.
+  const PREF_ROOT = "zen.pipgestures.";
+  const DEFAULTS = {
+    debug: false,       // log what the mod is doing (Browser Console, and a file on the Desktop)
+    logToFile: true,    // with debug on: also write PiP_Gestures_log.txt on the Desktop
+    enableMove: true,   // two-finger scroll moves the PiP window
+    enablePinch: true,  // pinch resizes the PiP window
+    panSpeed: 100,      // % - window move sensitivity
+    pinchSpeed: 100,    // % - resize sensitivity
+    keepOnScreen: true, // hard-stop the window at screen edges that have no neighbouring screen
+    minWidth: 200,      // px - smallest the window can be pinched down to
+    hideCursor: true,   // hide the cursor and carry it along with the window during a gesture
+    holdMs: 600,        // ms - how long resting fingers can pause mid-move before the cursor returns
+  };
+
   const P = Services.prefs;
-  const debugOn = () => P.getBoolPref("zen.pipgestures.debug", false);
-  const pinchSpeed = () => P.getIntPref("zen.pipgestures.pinchSpeed", 100) / 100;
-  const panSpeed = () => P.getIntPref("zen.pipgestures.panSpeed", 100) / 100;
-  const holdMs = () => P.getIntPref("zen.pipgestures.holdMs", 600);
+
+  // Give every setting a default so the Sine settings page and about:config show the real values.
+  (function registerDefaults() {
+    const branch = P.getDefaultBranch("");
+    for (const [name, def] of Object.entries(DEFAULTS)) {
+      try {
+        if (typeof def === "boolean") branch.setBoolPref(PREF_ROOT + name, def);
+        else branch.setIntPref(PREF_ROOT + name, def);
+      } catch (e) {}
+    }
+  })();
+
+  // Read a setting. Tolerant of the pref having been stored as a different type (e.g. a string from
+  // a settings UI), and always falls back to the default.
+  function pref(name) {
+    const def = DEFAULTS[name];
+    const full = PREF_ROOT + name;
+    try {
+      const type = P.getPrefType(full);
+      if (typeof def === "boolean") {
+        if (type === P.PREF_BOOL) return P.getBoolPref(full);
+        if (type === P.PREF_STRING) return P.getStringPref(full) === "true";
+        if (type === P.PREF_INT) return P.getIntPref(full) !== 0;
+      } else {
+        let v = NaN;
+        if (type === P.PREF_INT) v = P.getIntPref(full);
+        else if (type === P.PREF_STRING) v = parseInt(P.getStringPref(full), 10);
+        if (Number.isFinite(v)) return v;
+      }
+    } catch (e) {}
+    return def;
+  }
+  const debugOn = () => pref("debug");
+  const pinchSpeed = () => pref("pinchSpeed") / 100;
+  const panSpeed = () => pref("panSpeed") / 100;
+  const holdMs = () => pref("holdMs");
 
   // Screen geometry, in desktop (CSS-like) pixels. The available rect excludes the menu bar and Dock.
   const screenMgr = Cc["@mozilla.org/gfx/screenmanager;1"].getService(Ci.nsIScreenManager);
@@ -42,14 +88,16 @@
     }
   })();
 
-  // force = true logs even when the debug pref is off (used for the startup line)
+  // force = true also logs to the console when debug is off (startup and error lines).
+  // The Desktop log file is only written while debug is on.
   function log(msg, force) {
-    if (!force && !debugOn()) return;
-    if (++logCount > 3000) return; // keep it readable
+    const debug = debugOn();
+    if (!force && !debug) return;
+    if (++logCount > 5000) return; // keep it readable
     const line = "[PiP Gestures] " + msg;
     try { console.log(line); } catch (e) {}
     try { Services.console.logStringMessage(line); } catch (e) {}
-    if (LOG_FILE) {
+    if (LOG_FILE && debug && pref("logToFile")) {
       try {
         IOUtils.writeUTF8(LOG_FILE, new Date().toISOString() + " " + line + "\n", {
           mode: "appendOrCreate",
@@ -87,7 +135,6 @@
     // Window moves/resizes apply asynchronously, so we track our own target geometry
     // across a burst of events and only re-read the real geometry after a short idle gap.
     const IDLE_MS = 250;
-    const MIN_W = 200;
     const g = { x: 0, y: 0, w: 0, h: 0, aspect: 1, t: 0 };
 
     function sync() {
@@ -151,6 +198,7 @@
     }
 
     function keepOnScreen() {
+      if (!pref("keepOnScreen")) return;
       const b = windowBounds();
       g.x = clamp(g.x, b.minX, b.maxX);
       g.y = clamp(g.y, b.minY, b.maxY);
@@ -172,6 +220,7 @@
     let lastWarp = null;
     const warpHistory = []; // recent cursor positions we asked for (our own moves echo back as mousemoves)
     function warpCursor(cx, cy) {
+      if (!pref("hideCursor")) return;
       try {
         const scale = win.devicePixelRatio || 1;
         lastWarp = [Math.round(cx), Math.round(cy)];
@@ -203,6 +252,7 @@
     // because elements under the pointer (the controls overlay) set their own cursor.
     let hideStyle = null;
     function hideCursor() {
+      if (!pref("hideCursor")) return;
       view.style.pointerEvents = "none"; // let the chrome document, not the video process, pick the cursor
       doc.documentElement.style.cursor = "none";
       if (!hideStyle) {
@@ -304,7 +354,9 @@
     // Resize by `factor` around the window's centre.
     function resizeBy(factor) {
       sync();
-      const newW = clamp(g.w * factor, MIN_W, Math.max(MIN_W, windowBounds().maxW));
+      const minW = pref("minWidth");
+      const maxW = pref("keepOnScreen") ? windowBounds().maxW : Infinity;
+      const newW = clamp(g.w * factor, minW, Math.max(minW, maxW));
       const newH = newW / g.aspect;
       g.x -= (newW - g.w) / 2;
       g.y -= (newH - g.h) / 2;
@@ -363,6 +415,7 @@
     let lastWheelT = 0;
     function onRealMouseMove(e) {
       if (!gesturing && !fading) return;
+      if (!pref("hideCursor")) return;
       // While two fingers are actively scrolling the cursor can't be steered, and the window
       // sliding under it makes Gecko fire synthetic mouse moves; only trust moves that arrive
       // once the wheel stream has paused, or while the window is coasting.
@@ -395,6 +448,8 @@
     doc.addEventListener(
       "wheel",
       (e) => {
+        // A gesture that's switched off is left completely alone (default behaviour applies).
+        if (!pref(e.ctrlKey ? "enablePinch" : "enableMove")) return;
         e.preventDefault();
         e.stopPropagation();
         const mag = e.ctrlKey ? Math.abs(e.deltaY) : Math.hypot(e.deltaX, e.deltaY);
@@ -482,5 +537,5 @@
   try {
     P.setCharPref("zen.pipgestures.loaded", new Date().toISOString());
   } catch (e) {}
-  log("PiP Gestures v0.3.7 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
+  log("PiP Gestures v0.4.0 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
 })();

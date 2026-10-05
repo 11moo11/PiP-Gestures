@@ -2,14 +2,25 @@
   "id": "pip-gestures",
   "name": "PiP Gestures",
   "description": "Two-finger move and pinch-to-resize for Picture-in-Picture windows, like Arc.",
-  "homepage": "",
-  "version": "0.3.7",
+  "homepage": "https://github.com/11moo11/PiP-Gestures",
+  "author": "11moo11",
+  "version": "0.4.0",
   "createdAt": "2026-10-04",
   "updatedAt": "2026-10-05T00:00:00Z",
-  "fork": ["zen"],
+  "readme": "https://raw.githubusercontent.com/11moo11/PiP-Gestures/main/README.md",
+  "tags": [
+    "picture-in-picture",
+    "gestures",
+    "macos"
+  ],
+  "fork": [
+    "zen"
+  ],
   "scripts": {
     "pip-gestures.uc.js": {
-      "include": ["chrome://browser/content/browser.xhtml"]
+      "include": [
+        "chrome://browser/content/browser.xhtml"
+      ]
     }
   }
 }
