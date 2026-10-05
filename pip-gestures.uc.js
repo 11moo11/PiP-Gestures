@@ -715,62 +715,105 @@
         (lastWarp ? " lastAskedCursor=(" + lastWarp[0] + "," + lastWarp[1] + ")" : ""));
     }
 
-    doc.addEventListener(
-      "wheel",
-      (e) => {
-        // A gesture that's switched off is left completely alone (default behaviour applies).
-        if (!pref(e.ctrlKey ? "enablePinch" : "enableMove")) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const mag = e.ctrlKey ? Math.abs(e.deltaY) : Math.hypot(e.deltaX, e.deltaY);
-        lastWheelT = Date.now();
-        // Gummy: while a throw is in flight, the trackpad's leftover momentum events are ignored. A
-        // fresh touch (a pinch, a pause, or a jump in size) catches the window.
-        const tRaw = nowMs();
-        const rawGap = tRaw - GM.lastRawT;
-        const prevMag = GM.lastMag;
-        GM.lastRawT = tRaw;
-        GM.lastMag = mag;
-        if (GM.swallow) {
-          if (e.ctrlKey || rawGap > 90 || mag > prevMag * 1.25 + 2) {
-            GM.swallow = false;
-            GM.bv.x = GM.bv.y = 0;
-            log("gummy: caught the flying window");
-          } else {
-            return;
-          }
-        }
-        if (takeover) {
-          // Keep coasting, but leave the cursor alone.
-          if (takeoverTimer) win.clearTimeout(takeoverTimer);
-          takeoverTimer = win.setTimeout(() => { takeover = false; }, 200);
+    // Handles both two-finger scrolls (moves) and pinches (ctrl+wheel). A scroll is delivered to the
+    // window under the cursor, so it arrives here directly; a pinch is only delivered to the focused
+    // window, so for an unfocused PiP it arrives via the browser-window listener further down and is
+    // handed to this function through win.__pipGesturesController.
+    function onWheel(e) {
+      // A gesture that's switched off is left completely alone (default behaviour applies).
+      if (!pref(e.ctrlKey ? "enablePinch" : "enableMove")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const mag = e.ctrlKey ? Math.abs(e.deltaY) : Math.hypot(e.deltaX, e.deltaY);
+      lastWheelT = Date.now();
+      // Gummy: while a throw is in flight, the trackpad's leftover momentum events are ignored. A
+      // fresh touch (a pinch, a pause, or a jump in size) catches the window.
+      const tRaw = nowMs();
+      const rawGap = tRaw - GM.lastRawT;
+      const prevMag = GM.lastMag;
+      GM.lastRawT = tRaw;
+      GM.lastMag = mag;
+      if (GM.swallow) {
+        if (e.ctrlKey || rawGap > 90 || mag > prevMag * 1.25 + 2) {
+          GM.swallow = false;
+          GM.bv.x = GM.bv.y = 0;
+          log("gummy: caught the flying window");
         } else {
-          if (!shouldStart(e)) return;
-          touchGesture(e, e.ctrlKey);
-          // A jump in size means a fresh touch rather than a fading coast.
-          if (fading && recent.length && mag > recent[recent.length - 1] * 1.25 + 2) fading = false;
-          recent.push(mag);
-          if (recent.length > 8) recent.shift();
-          if (!fading && looksLikeMomentum()) {
-            fading = true;
-            log("fingers lifted (momentum fade detected); letting the window coast");
-            touchGesture(e, e.ctrlKey); // re-arm the idle timer with the shorter coasting grace period
-          }
-        }
-        if (e.ctrlKey) {
-          // Pinch out -> negative deltaY -> bigger window.
-          resizeBy(Math.exp(-e.deltaY * 0.005 * pinchSpeed()));
-          logEvent(e);
           return;
         }
-        const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? win.innerHeight : 1;
-        const sp = panSpeed();
-        // Window follows the fingers (natural scrolling reports the opposite sign).
-        if (gummyOn()) gummyMove(-e.deltaX * unit * sp, -e.deltaY * unit * sp);
-        else moveBy(-e.deltaX * unit * sp, -e.deltaY * unit * sp);
+      }
+      if (takeover) {
+        // Keep coasting, but leave the cursor alone.
+        if (takeoverTimer) win.clearTimeout(takeoverTimer);
+        takeoverTimer = win.setTimeout(() => { takeover = false; }, 200);
+      } else {
+        if (!shouldStart(e)) return;
+        touchGesture(e, e.ctrlKey);
+        // A jump in size means a fresh touch rather than a fading coast.
+        if (fading && recent.length && mag > recent[recent.length - 1] * 1.25 + 2) fading = false;
+        recent.push(mag);
+        if (recent.length > 8) recent.shift();
+        if (!fading && looksLikeMomentum()) {
+          fading = true;
+          log("fingers lifted (momentum fade detected); letting the window coast");
+          touchGesture(e, e.ctrlKey); // re-arm the idle timer with the shorter coasting grace period
+        }
+      }
+      if (e.ctrlKey) {
+        // Pinch out -> negative deltaY -> bigger window.
+        resizeBy(Math.exp(-e.deltaY * 0.005 * pinchSpeed()));
         logEvent(e);
+        return;
+      }
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? win.innerHeight : 1;
+      const sp = panSpeed();
+      // Window follows the fingers (natural scrolling reports the opposite sign).
+      if (gummyOn()) gummyMove(-e.deltaX * unit * sp, -e.deltaY * unit * sp);
+      else moveBy(-e.deltaX * unit * sp, -e.deltaY * unit * sp);
+      logEvent(e);
+    }
+    doc.addEventListener("wheel", onWheel, { capture: true, passive: false });
+    win.__pipGesturesController = { onWheel };
+  }
+
+  // ---- Pinching an unfocused PiP window ------------------------------------------------------
+  // macOS delivers scroll events to the window under the cursor but pinch gestures only to the focused
+  // window. With the PiP unfocused (the usual case while you work in the browser), the pinch lands on
+  // the main window instead, where it would zoom the page. Catch it here and, if the cursor is over a
+  // PiP window, resize that window instead.
+  function pipUnderCursor(e) {
+    for (const w of Services.wm.getEnumerator(null)) {
+      try {
+        if (!w.__pipGesturesController || !isPipWindow(w)) continue;
+        if (e.screenX >= w.screenX && e.screenX < w.screenX + w.outerWidth &&
+            e.screenY >= w.screenY && e.screenY < w.screenY + w.outerHeight) return w;
+      } catch (err) {}
+    }
+    return null;
+  }
+  let forwardedLogs = 0;
+  window.addEventListener(
+    "wheel",
+    (e) => {
+      if (!e.ctrlKey) return;
+      const pip = pipUnderCursor(e);
+      if (!pip) return;
+      if (forwardedLogs++ < 3) log("pinch over an unfocused PiP window; handing it over");
+      pip.__pipGesturesController.onWheel(e);
+    },
+    { capture: true, passive: false }
+  );
+  // Some setups report pinches as gesture events rather than ctrl+wheel; log them so we can tell.
+  let magnifyLogs = 0;
+  for (const type of ["MozMagnifyGestureStart", "MozMagnifyGestureUpdate"]) {
+    window.addEventListener(
+      type,
+      (e) => {
+        const pip = pipUnderCursor(e);
+        if (!pip) return;
+        if (magnifyLogs++ < 5) log(type + " over a PiP window: delta=" + e.delta + " (not handled)");
       },
-      { capture: true, passive: false }
+      true
     );
   }
 
@@ -824,5 +867,5 @@
   try {
     P.setCharPref("zen.pipgestures.loaded", new Date().toISOString());
   } catch (e) {}
-  log("PiP Gestures v0.5.0 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
+  log("PiP Gestures v0.5.1 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
 })();
