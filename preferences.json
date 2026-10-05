@@ -1,0 +1,130 @@
+[
+  {
+    "type": "text",
+    "label": "**PiP Gestures**",
+    "size": "20px",
+    "margin": "0 0 4px 0"
+  },
+  {
+    "type": "text",
+    "label": "Two-finger scroll moves a Picture-in-Picture window and pinching resizes it, like Arc. Changes apply instantly."
+  },
+
+  {
+    "type": "separator",
+    "label": "Gestures",
+    "margin": "16px 0 8px 0"
+  },
+  {
+    "type": "checkbox",
+    "property": "zen.pipgestures.enableMove",
+    "label": "Move the window with a two-finger scroll",
+    "defaultValue": true
+  },
+  {
+    "type": "dropdown",
+    "property": "zen.pipgestures.panSpeed",
+    "label": "Move speed",
+    "value": "number",
+    "defaultValue": 100,
+    "placeholder": false,
+    "options": [
+      { "label": "Slow (50%)", "value": 50 },
+      { "label": "Gentle (75%)", "value": 75 },
+      { "label": "Normal (100%)", "value": 100 },
+      { "label": "Fast (150%)", "value": 150 },
+      { "label": "Very fast (200%)", "value": 200 }
+    ]
+  },
+  {
+    "type": "checkbox",
+    "property": "zen.pipgestures.enablePinch",
+    "label": "Resize the window by pinching",
+    "defaultValue": true
+  },
+  {
+    "type": "dropdown",
+    "property": "zen.pipgestures.pinchSpeed",
+    "label": "Pinch speed",
+    "value": "number",
+    "defaultValue": 100,
+    "placeholder": false,
+    "options": [
+      { "label": "Slow (50%)", "value": 50 },
+      { "label": "Gentle (75%)", "value": 75 },
+      { "label": "Normal (100%)", "value": 100 },
+      { "label": "Fast (150%)", "value": 150 },
+      { "label": "Very fast (200%)", "value": 200 }
+    ]
+  },
+  {
+    "type": "dropdown",
+    "property": "zen.pipgestures.minWidth",
+    "label": "Smallest window width when pinching in",
+    "value": "number",
+    "defaultValue": 200,
+    "placeholder": false,
+    "options": [
+      { "label": "Tiny (160px)", "value": 160 },
+      { "label": "Small (200px)", "value": 200 },
+      { "label": "Medium (280px)", "value": 280 },
+      { "label": "Large (400px)", "value": 400 }
+    ]
+  },
+
+  {
+    "type": "separator",
+    "label": "Window edges",
+    "margin": "16px 0 8px 0"
+  },
+  {
+    "type": "checkbox",
+    "property": "zen.pipgestures.keepOnScreen",
+    "label": "Keep the window on screen (it stops at screen edges that have no other monitor beyond them)",
+    "defaultValue": true
+  },
+
+  {
+    "type": "separator",
+    "label": "Cursor",
+    "margin": "16px 0 8px 0"
+  },
+  {
+    "type": "checkbox",
+    "property": "zen.pipgestures.hideCursor",
+    "label": "Hide the cursor during a gesture and carry it along with the window",
+    "defaultValue": true
+  },
+  {
+    "type": "dropdown",
+    "property": "zen.pipgestures.holdMs",
+    "label": "How long you can rest your fingers mid-move before the cursor comes back",
+    "value": "number",
+    "defaultValue": 600,
+    "placeholder": false,
+    "options": [
+      { "label": "Short (300 ms)", "value": 300 },
+      { "label": "Normal (600 ms)", "value": 600 },
+      { "label": "Long (1000 ms)", "value": 1000 },
+      { "label": "Very long (1500 ms)", "value": 1500 }
+    ]
+  },
+
+  {
+    "type": "separator",
+    "label": "Troubleshooting",
+    "margin": "16px 0 8px 0"
+  },
+  {
+    "type": "checkbox",
+    "property": "zen.pipgestures.debug",
+    "label": "Debug mode (log what the mod is doing to the Browser Console)",
+    "defaultValue": false
+  },
+  {
+    "type": "checkbox",
+    "property": "zen.pipgestures.logToFile",
+    "label": "While debug mode is on, also save the log to PiP_Gestures_log.txt on the Desktop",
+    "defaultValue": true
+  }
+]
