@@ -58,14 +58,15 @@
 
   function attach(win) {
     if (win.__pipGesturesAttached) return;
-    win.__pipGesturesAttached = true;
 
     const doc = win.document;
     const view = doc.getElementById("browser") || doc.querySelector("browser");
     if (!view) {
-      log("PiP window found, but could not find the video element.", true);
+      // DOM may not be parsed yet; don't mark as attached so a later call can retry.
+      log("PiP window found, but could not find the video element (readyState=" + doc.readyState + ").", true);
       return;
     }
+    win.__pipGesturesAttached = true;
     log("Attached to a PiP window. Video element: <" + view.localName + "#" + view.id + ">", true);
 
     view.style.transformOrigin = "0 0";
@@ -199,18 +200,23 @@
 
   function consider(win) {
     if (!win || !win.document) return;
-    if (isPipWindow(win) && win.document.readyState !== "uninitialized") {
+    let href = "?";
+    try { href = win.location.href; } catch (e) {}
+    log("window opened: " + href + " (readyState=" + win.document.readyState + ")", true);
+
+    // Only attach once the DOM is fully loaded; at open time the <browser> may not exist yet.
+    if (isPipWindow(win) && win.document.readyState === "complete") {
       attach(win);
       return;
     }
-    // Not loaded yet: check again once it finishes loading.
-    win.addEventListener(
-      "load",
-      () => {
-        if (isPipWindow(win)) attach(win);
-      },
-      { once: true }
-    );
+    // Not loaded yet (or still the initial about:blank): check again on load.
+    // Not { once: true } so a stray early load event can't consume the listener.
+    const onLoad = () => {
+      if (!isPipWindow(win)) return;
+      win.removeEventListener("load", onLoad);
+      attach(win);
+    };
+    win.addEventListener("load", onLoad);
   }
 
   const listener = {
