@@ -200,6 +200,21 @@
       commit(false);
     }
 
+    // Dead zone: a lone 1px twitch (resting fingers, trackpad noise) shouldn't hijack the cursor or
+    // nudge the window. A gesture starts once ~4px of movement accumulates within a short window.
+    const START_DISTANCE = 4;
+    const START_WINDOW_MS = 150;
+    let pending = 0;
+    let pendingT = 0;
+    function shouldStart(e) {
+      if (gesturing) return true;
+      const now = Date.now();
+      if (now - pendingT > START_WINDOW_MS) pending = 0;
+      pendingT = now;
+      pending += Math.abs(e.deltaX) + Math.abs(e.deltaY);
+      return pending >= START_DISTANCE;
+    }
+
     // Log the first events of every gesture, then every 10th, so long gestures stay readable.
     function logEvent(e) {
       evN++;
@@ -214,6 +229,7 @@
       (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (!shouldStart(e)) return;
         touchGesture();
         if (e.ctrlKey) {
           // Pinch out -> negative deltaY -> bigger window.
@@ -281,5 +297,5 @@
   try {
     P.setCharPref("zen.pipgestures.loaded", new Date().toISOString());
   } catch (e) {}
-  log("PiP Gestures v0.3.1 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
+  log("PiP Gestures v0.3.2 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
 })();
