@@ -23,15 +23,15 @@
   const panSpeed = () => P.getIntPref("zen.pipgestures.panSpeed", 100) / 100;
   const holdMs = () => P.getIntPref("zen.pipgestures.holdMs", 600);
 
-  // With a single monitor the PiP window is kept fully on screen; with several we let it roam.
+  // Screen geometry, in desktop (CSS-like) pixels. The available rect excludes the menu bar and Dock.
   const screenMgr = Cc["@mozilla.org/gfx/screenmanager;1"].getService(Ci.nsIScreenManager);
-  const isSingleScreen = () => {
-    try {
-      return screenMgr.numberOfScreens <= 1;
-    } catch (e) {
-      return true;
-    }
-  };
+  function availRectAt(x, y) {
+    const scr = screenMgr.screenForRect(Math.round(x), Math.round(y), 1, 1); // nearest screen to the point
+    const L = {}, T = {}, W = {}, H = {};
+    scr.GetAvailRectDisplayPix(L, T, W, H);
+    return { left: L.value, top: T.value, right: L.value + W.value, bottom: T.value + H.value };
+  }
+  const sameRect = (a, b) => a.left === b.left && a.top === b.top && a.right === b.right && a.bottom === b.bottom;
 
   let logCount = 0;
   const LOG_FILE = (() => {
@@ -102,21 +102,58 @@
       g.t = now;
     }
 
-    function keepOnScreen() {
-      const sc = win.screen;
-      const left = sc.availLeft || 0;
-      const top = sc.availTop || 0;
-      if (isSingleScreen()) {
-        // Active repel: the window can't cross any screen edge (menu bar and Dock excluded),
-        // and a window that is already out of bounds is pulled back in on the next gesture.
-        g.x = clamp(g.x, left, Math.max(left, left + sc.availWidth - Math.ceil(g.w)));
-        g.y = clamp(g.y, top, Math.max(top, top + sc.availHeight - Math.ceil(g.h)));
-      } else {
-        // Several monitors: let it travel between them, but keep part of it reachable.
-        const margin = 60;
-        g.x = clamp(g.x, left - g.w + margin, left + sc.availWidth - margin);
-        g.y = clamp(g.y, top, top + sc.availHeight - margin);
+    // Where the window may be. An edge with no other screen beyond it is a hard wall (the window
+    // is repelled and can never be clipped by it); an edge that borders another screen is open,
+    // so the window can still travel between monitors.
+    let lastBoundsLog = "";
+    function windowBounds() {
+      const w = Math.ceil(g.w);
+      const h = Math.ceil(g.h);
+      const cx = g.x + g.w / 2;
+      const cy = g.y + g.h / 2;
+      let r;
+      let open = { l: false, r: false, t: false, b: false };
+      try {
+        r = availRectAt(cx, cy);
+        // The nearest screen to a point beyond the edge is this same screen unless another one is there.
+        open = {
+          l: !sameRect(availRectAt(r.left - 8, cy), r),
+          r: !sameRect(availRectAt(r.right + 8, cy), r),
+          t: !sameRect(availRectAt(cx, r.top - 8), r),
+          b: !sameRect(availRectAt(cx, r.bottom + 8), r),
+        };
+      } catch (e) {
+        // Fall back to the window's own screen with hard walls all round.
+        const sc = win.screen;
+        const left = sc.availLeft || 0;
+        const top = sc.availTop || 0;
+        r = { left, top, right: left + sc.availWidth, bottom: top + sc.availHeight };
       }
+      const margin = 60; // across an open edge, keep this much of the window reachable
+      const minX = open.l ? r.left - w + margin : r.left;
+      const minY = open.t ? r.top - h + margin : r.top;
+      const maxX = open.r ? r.right - margin : r.right - w;
+      const maxY = open.b ? r.bottom - margin : r.bottom - h;
+      const desc = "screen=(" + r.left + "," + r.top + " " + (r.right - r.left) + "x" + (r.bottom - r.top) +
+        ") neighbours L" + +open.l + " R" + +open.r + " T" + +open.t + " B" + +open.b +
+        " screens=" + screenMgr.numberOfScreens + " win.screen=" + win.screen.availWidth + "x" + win.screen.availHeight;
+      if (desc !== lastBoundsLog) {
+        lastBoundsLog = desc;
+        log("bounds: " + desc);
+      }
+      return {
+        minX, minY, maxX: Math.max(minX, maxX), maxY: Math.max(minY, maxY),
+        // Largest window that fits on this screen at the current aspect ratio.
+        maxW: open.l || open.r || open.t || open.b
+          ? r.right - r.left
+          : Math.min(r.right - r.left, (r.bottom - r.top) * g.aspect),
+      };
+    }
+
+    function keepOnScreen() {
+      const b = windowBounds();
+      g.x = clamp(g.x, b.minX, b.maxX);
+      g.y = clamp(g.y, b.minY, b.maxY);
     }
 
     // The OS delivers scroll events to whichever window is under the cursor, so once the
@@ -161,7 +198,6 @@
       }
     }
 
-    const actualCentre = () => [win.screenX + win.outerWidth / 2, win.screenY + win.outerHeight / 2];
 
     // Hide the cursor everywhere in the window. A plain `cursor: none` on the root isn't enough
     // because elements under the pointer (the controls overlay) set their own cursor.
@@ -192,6 +228,23 @@
     let curFx = 0.5;
     let curFy = 0.5;
 
+    // Re-read the window's real geometry and push it back inside the walls if it ended up outside
+    // (e.g. the OS adjusted the size or position of a move/resize we asked for).
+    function settleOnScreen() {
+      g.x = win.screenX;
+      g.y = win.screenY;
+      g.w = win.outerWidth;
+      g.h = win.outerHeight;
+      g.t = Date.now();
+      const x0 = g.x;
+      const y0 = g.y;
+      keepOnScreen();
+      if (g.x !== x0 || g.y !== y0) {
+        log("pushed back inside the screen edge: (" + x0 + "," + y0 + ") -> (" + Math.round(g.x) + "," + Math.round(g.y) + ")");
+        try { win.moveTo(Math.round(g.x), Math.round(g.y)); } catch (e) {}
+      }
+    }
+
     function endGesture(reason, userTookOver) {
       if (!gesturing) return;
       gesturing = false;
@@ -201,7 +254,8 @@
       fading = false;
       // The window has settled by now; park the (still hidden) cursor at the centre of where it
       // ended up, then reveal it a moment later so the jump itself is never seen.
-      const a = actualCentre();
+      settleOnScreen();
+      const a = [g.x + g.w / 2, g.y + g.h / 2];
       log("gesture end (" + (typeof reason === "string" ? reason : "idle") + ") after " + evN + " events; target=(" + Math.round(g.x) + "," + Math.round(g.y) + " " +
         Math.round(g.w) + "x" + Math.round(g.h) + ") actual=(" + win.screenX + "," + win.screenY + " " +
         win.outerWidth + "x" + win.outerHeight + ")");
@@ -250,10 +304,7 @@
     // Resize by `factor` around the window's centre.
     function resizeBy(factor) {
       sync();
-      const sc = win.screen;
-      // On a single screen the window must also fit vertically.
-      const maxW = isSingleScreen() ? Math.min(sc.availWidth, sc.availHeight * g.aspect) : sc.availWidth;
-      const newW = clamp(g.w * factor, MIN_W, maxW);
+      const newW = clamp(g.w * factor, MIN_W, Math.max(MIN_W, windowBounds().maxW));
       const newH = newW / g.aspect;
       g.x -= (newW - g.w) / 2;
       g.y -= (newH - g.h) / 2;
@@ -431,5 +482,5 @@
   try {
     P.setCharPref("zen.pipgestures.loaded", new Date().toISOString());
   } catch (e) {}
-  log("PiP Gestures v0.3.6 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
+  log("PiP Gestures v0.3.7 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
 })();
