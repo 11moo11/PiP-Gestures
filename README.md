@@ -7,7 +7,7 @@ Two-finger move and pinch-to-resize for Picture-in-Picture windows in [Zen Brows
 - The cursor hides while you gesture and travels with the window, then comes back at the window's center.
 - The window stops at screen edges that have no other monitor beyond them, so it can't be clipped. Edges that border another monitor stay open.
 
-macOS only sends pinch gestures to the focused window, so while your cursor rests over a PiP window it takes focus (and gives it back when you leave). Switch this off with "Focus the PiP while hovering it" if you'd rather click the window first. It never steals focus from the address bar or a text field, or when another app is frontmost.
+macOS only sends pinch gestures to the focused window, so while your cursor rests over a PiP window it takes focus (and gives it back when you leave). Switch this off with "Focus the PiP while hovering it" if you'd rather click the window first. It never takes focus while you're typing in the browser, or when another app is frontmost (a pinch can't reach the PiP then, since macOS sends it to the other app).
 
 ## Gummy mode
 
