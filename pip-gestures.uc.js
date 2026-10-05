@@ -32,7 +32,7 @@
   // force = true logs even when the debug pref is off (used for the startup line)
   function log(msg, force) {
     if (!force && !debugOn()) return;
-    if (++logCount > 400) return; // keep it readable
+    if (++logCount > 3000) return; // keep it readable
     const line = "[PiP Gestures] " + msg;
     try { console.log(line); } catch (e) {}
     try { Services.console.logStringMessage(line); } catch (e) {}
@@ -106,12 +106,12 @@
     const wu = win.windowUtils;
     let warpFailed = false;
     let newSignature = true; // sendNativeMouseEvent(x, y, msg, button, modifiers, element, observer)
-    function warpCursorToCentre() {
+    // (cx, cy) is the point to put the cursor at, in screen CSS pixels.
+    function warpCursor(cx, cy) {
       try {
         const scale = wu.screenPixelsPerCSSPixel || 1;
-        // Use the window's actual position (not our target) so the cursor never gets ahead of it.
-        const x = (win.screenX + win.outerWidth / 2) * scale;
-        const y = (win.screenY + win.outerHeight / 2) * scale;
+        const x = cx * scale;
+        const y = cy * scale;
         const el = doc.documentElement;
         const MOVE = Ci.nsIDOMWindowUtils.NATIVE_MOUSE_MESSAGE_MOVE;
         if (newSignature) {
@@ -131,19 +131,31 @@
       }
     }
 
+    const targetCentre = () => [g.x + g.w / 2, g.y + g.h / 2];
+    const actualCentre = () => [win.screenX + win.outerWidth / 2, win.screenY + win.outerHeight / 2];
+
     let gesturing = false;
     let idleTimer = null;
+    let evN = 0;
     function endGesture() {
       gesturing = false;
       idleTimer = null;
-      warpCursorToCentre();
+      // The window has settled by now; leave the cursor at the centre of where it ended up.
+      const a = actualCentre();
+      log("gesture end after " + evN + " events; target=(" + Math.round(g.x) + "," + Math.round(g.y) + " " +
+        Math.round(g.w) + "x" + Math.round(g.h) + ") actual=(" + win.screenX + "," + win.screenY + " " +
+        win.outerWidth + "x" + win.outerHeight + ")");
+      warpCursor(a[0], a[1]);
       doc.documentElement.style.cursor = "";
       view.style.pointerEvents = "";
     }
     function touchGesture() {
       if (!gesturing) {
         gesturing = true;
-        warpCursorToCentre();
+        evN = 0;
+        const a = actualCentre();
+        log("gesture start; warping cursor to centre (" + Math.round(a[0]) + "," + Math.round(a[1]) + ")");
+        warpCursor(a[0], a[1]);
         // Let the chrome document (not the video's own process) decide the cursor, then hide it.
         view.style.pointerEvents = "none";
         doc.documentElement.style.cursor = "none";
@@ -160,7 +172,12 @@
       } catch (e) {
         log("move/resize failed: " + e, true);
       }
-      if (gesturing) warpCursorToCentre();
+      // Follow the window's *target* position: the reported position can lag behind the move,
+      // which would pull the cursor back to where the window used to be.
+      if (gesturing) {
+        const t = targetCentre();
+        warpCursor(t[0], t[1]);
+      }
     }
 
     // Resize by `factor` around the window's centre.
@@ -183,25 +200,32 @@
       commit(false);
     }
 
-    let wheelLogs = 0;
+    // Log the first events of every gesture, then every 10th, so long gestures stay readable.
+    function logEvent(e) {
+      evN++;
+      if (evN > 25 && evN % 10) return;
+      log("#" + evN + " " + (e.ctrlKey ? "pinch" : "move") + " dx=" + e.deltaX + " dy=" + e.deltaY +
+        " target=(" + Math.round(g.x) + "," + Math.round(g.y) + " " + Math.round(g.w) + "x" + Math.round(g.h) +
+        ") actual=(" + win.screenX + "," + win.screenY + ")");
+    }
+
     doc.addEventListener(
       "wheel",
       (e) => {
-        if (wheelLogs++ < 8) {
-          log("wheel ctrl=" + e.ctrlKey + " dx=" + e.deltaX + " dy=" + e.deltaY + " mode=" + e.deltaMode);
-        }
         e.preventDefault();
         e.stopPropagation();
         touchGesture();
         if (e.ctrlKey) {
           // Pinch out -> negative deltaY -> bigger window.
           resizeBy(Math.exp(-e.deltaY * 0.005 * pinchSpeed()));
+          logEvent(e);
           return;
         }
         const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? win.innerHeight : 1;
         const sp = panSpeed();
         // Window follows the fingers (natural scrolling reports the opposite sign).
         moveBy(-e.deltaX * unit * sp, -e.deltaY * unit * sp);
+        logEvent(e);
       },
       { capture: true, passive: false }
     );
@@ -257,5 +281,5 @@
   try {
     P.setCharPref("zen.pipgestures.loaded", new Date().toISOString());
   } catch (e) {}
-  log("PiP Gestures v0.3 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
+  log("PiP Gestures v0.3.1 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
 })();
