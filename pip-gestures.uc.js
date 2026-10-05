@@ -133,10 +133,13 @@
     // (it counts OS points), which put the cursor at half the intended coordinates; the window's
     // devicePixelRatio is the device-pixels-per-CSS-pixel we actually need.
     let lastWarp = null;
+    const warpHistory = []; // recent cursor positions we asked for (our own moves echo back as mousemoves)
     function warpCursor(cx, cy) {
       try {
         const scale = win.devicePixelRatio || 1;
         lastWarp = [Math.round(cx), Math.round(cy)];
+        warpHistory.push(lastWarp);
+        if (warpHistory.length > 16) warpHistory.shift();
         const x = cx * scale;
         const y = cy * scale;
         const el = doc.documentElement;
@@ -182,24 +185,31 @@
     }
 
     let gesturing = false;
+    let fading = false; // fingers are up and the momentum is fading out
     let idleTimer = null;
     let evN = 0;
     // Where the cursor sits inside the window, as a fraction of its size.
     let curFx = 0.5;
     let curFy = 0.5;
 
-    function endGesture(reason) {
+    function endGesture(reason, userTookOver) {
       if (!gesturing) return;
       gesturing = false;
       if (idleTimer) win.clearTimeout(idleTimer);
       idleTimer = null;
       recent.length = 0;
+      fading = false;
       // The window has settled by now; park the (still hidden) cursor at the centre of where it
       // ended up, then reveal it a moment later so the jump itself is never seen.
       const a = actualCentre();
       log("gesture end (" + (typeof reason === "string" ? reason : "idle") + ") after " + evN + " events; target=(" + Math.round(g.x) + "," + Math.round(g.y) + " " +
         Math.round(g.w) + "x" + Math.round(g.h) + ") actual=(" + win.screenX + "," + win.screenY + " " +
         win.outerWidth + "x" + win.outerHeight + ")");
+      if (userTookOver) {
+        // They're already steering the cursor themselves: just give it back, don't move it.
+        showCursor();
+        return;
+      }
       warpCursor(a[0], a[1]);
       // Just long enough for the cursor to land before it's revealed.
       win.setTimeout(() => { if (!gesturing) showCursor(); }, 30);
@@ -214,13 +224,15 @@
         const fy = (e.screenY - win.screenY) / (win.outerHeight || 1);
         curFx = Number.isFinite(fx) ? clamp(fx, 0.05, 0.95) : 0.5;
         curFy = Number.isFinite(fy) ? clamp(fy, 0.05, 0.95) : 0.5;
+        warpHistory.push([Math.round(e.screenX), Math.round(e.screenY)]); // where the cursor really is now
         log("gesture start; cursor at " + curFx.toFixed(2) + "," + curFy.toFixed(2) + " of the window");
         hideCursor();
       }
       if (idleTimer) win.clearTimeout(idleTimer);
       // A trackpad sends nothing while fingers rest, so "paused" and "lifted" look the same here.
       // Pauses get a generous grace period for moves; lifts with momentum are caught separately.
-      idleTimer = win.setTimeout(endGesture, isPinch ? 250 : holdMs());
+      // While momentum is fading, any gap means the coast is over; otherwise allow for resting fingers.
+      idleTimer = win.setTimeout(endGesture, fading ? 150 : isPinch ? 250 : holdMs());
     }
 
     function commit(resized) {
@@ -273,13 +285,10 @@
     }
 
     // Momentum: after the fingers lift, macOS keeps sending wheel events whose size fades out
-    // smoothly (~0.8s). That's the one reliable "fingers are up" signal we get, so we detect the
-    // fade, end the gesture immediately (cursor back at once) and swallow the rest of the coast.
+    // smoothly, and we let the window coast on them. We only use the fade to know the fingers are
+    // up, so that the gesture can end as soon as the coasting stops instead of waiting out the
+    // longer "fingers are just resting" grace period.
     const recent = []; // magnitudes of the latest events in this gesture
-    let coasting = false;
-    let coastMag = 0;
-    let coastRises = 0;
-    let coastTimer = null;
     function looksLikeMomentum() {
       const n = 8;
       if (recent.length < n) return false;
@@ -292,12 +301,33 @@
       const ratio = r[n - 1] / r[0];
       return r[0] >= 12 && drops >= 5 && ratio >= 0.6 && ratio <= 0.97;
     }
-    function armCoastEnd() {
-      if (coastTimer) win.clearTimeout(coastTimer);
-      coastTimer = win.setTimeout(() => {
-        coasting = false;
-        coastTimer = null;
-      }, 150);
+
+    // If the user grabs the cursor (one-finger movement) mid-gesture or while the window is still
+    // coasting, the cursor is theirs: show it where it is and never warp it back to the window.
+    let takeover = false;
+    let takeoverTimer = null;
+    function isOurMove(e) {
+      return warpHistory.some((w) => Math.abs(e.screenX - w[0]) <= 4 && Math.abs(e.screenY - w[1]) <= 4);
+    }
+    let lastWheelT = 0;
+    function onRealMouseMove(e) {
+      if (!gesturing && !fading) return;
+      // While two fingers are actively scrolling the cursor can't be steered, and the window
+      // sliding under it makes Gecko fire synthetic mouse moves; only trust moves that arrive
+      // once the wheel stream has paused, or while the window is coasting.
+      if (!fading && Date.now() - lastWheelT < 60) return;
+      if (isOurMove(e)) return;
+      log("mouse moved by the user at (" + e.screenX + "," + e.screenY + "); giving the cursor back");
+      takeover = true;
+      endGesture("mouse moved", true);
+      if (takeoverTimer) win.clearTimeout(takeoverTimer);
+      takeoverTimer = win.setTimeout(() => { takeover = false; }, 200);
+    }
+    doc.addEventListener("mousemove", onRealMouseMove, true);
+    // The cursor may be over the main window when the user moves it with one finger.
+    for (const w of Services.wm.getEnumerator("navigator:browser")) {
+      w.addEventListener("mousemove", onRealMouseMove, true);
+      win.addEventListener("unload", () => { try { w.removeEventListener("mousemove", onRealMouseMove, true); } catch (e) {} }, { once: true });
     }
 
     // Log the first events of every gesture, then every 10th, so long gestures stay readable.
@@ -317,31 +347,23 @@
         e.preventDefault();
         e.stopPropagation();
         const mag = e.ctrlKey ? Math.abs(e.deltaY) : Math.hypot(e.deltaX, e.deltaY);
-        if (coasting) {
-          // Still fading out? Swallow it. A fresh touch shows up as a jump, or as events that
-          // stop shrinking.
-          const resumed = mag > coastMag * 1.25 + 2 || (mag >= 8 && mag >= coastMag && ++coastRises >= 3);
-          if (mag < coastMag) coastRises = 0;
-          if (!resumed) {
-            coastMag = mag;
-            armCoastEnd();
-            return;
+        lastWheelT = Date.now();
+        if (takeover) {
+          // Keep coasting, but leave the cursor alone.
+          if (takeoverTimer) win.clearTimeout(takeoverTimer);
+          takeoverTimer = win.setTimeout(() => { takeover = false; }, 200);
+        } else {
+          if (!shouldStart(e)) return;
+          touchGesture(e, e.ctrlKey);
+          // A jump in size means a fresh touch rather than a fading coast.
+          if (fading && recent.length && mag > recent[recent.length - 1] * 1.25 + 2) fading = false;
+          recent.push(mag);
+          if (recent.length > 8) recent.shift();
+          if (!fading && looksLikeMomentum()) {
+            fading = true;
+            log("fingers lifted (momentum fade detected); letting the window coast");
+            touchGesture(e, e.ctrlKey); // re-arm the idle timer with the shorter coasting grace period
           }
-          coasting = false;
-          recent.length = 0;
-          log("new touch while coasting");
-        }
-        if (!shouldStart(e)) return;
-        touchGesture(e, e.ctrlKey);
-        recent.push(mag);
-        if (recent.length > 8) recent.shift();
-        if (looksLikeMomentum()) {
-          coasting = true;
-          coastMag = mag;
-          coastRises = 0;
-          endGesture("fingers lifted");
-          armCoastEnd();
-          return;
         }
         if (e.ctrlKey) {
           // Pinch out -> negative deltaY -> bigger window.
@@ -409,5 +431,5 @@
   try {
     P.setCharPref("zen.pipgestures.loaded", new Date().toISOString());
   } catch (e) {}
-  log("PiP Gestures v0.3.5 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
+  log("PiP Gestures v0.3.6 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
 })();
