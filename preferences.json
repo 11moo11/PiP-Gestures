@@ -9,7 +9,6 @@
     "type": "text",
     "label": "Two-finger scroll moves a Picture-in-Picture window and pinching resizes it, like Arc. Changes apply instantly."
   },
-
   {
     "type": "separator",
     "label": "Gestures",
@@ -29,11 +28,26 @@
     "defaultValue": 100,
     "placeholder": false,
     "options": [
-      { "label": "Slow (50%)", "value": 50 },
-      { "label": "Gentle (75%)", "value": 75 },
-      { "label": "Normal (100%)", "value": 100 },
-      { "label": "Fast (150%)", "value": 150 },
-      { "label": "Very fast (200%)", "value": 200 }
+      {
+        "label": "Slow (50%)",
+        "value": 50
+      },
+      {
+        "label": "Gentle (75%)",
+        "value": 75
+      },
+      {
+        "label": "Normal (100%)",
+        "value": 100
+      },
+      {
+        "label": "Fast (150%)",
+        "value": 150
+      },
+      {
+        "label": "Very fast (200%)",
+        "value": 200
+      }
     ]
   },
   {
@@ -50,11 +64,26 @@
     "defaultValue": 100,
     "placeholder": false,
     "options": [
-      { "label": "Slow (50%)", "value": 50 },
-      { "label": "Gentle (75%)", "value": 75 },
-      { "label": "Normal (100%)", "value": 100 },
-      { "label": "Fast (150%)", "value": 150 },
-      { "label": "Very fast (200%)", "value": 200 }
+      {
+        "label": "Slow (50%)",
+        "value": 50
+      },
+      {
+        "label": "Gentle (75%)",
+        "value": 75
+      },
+      {
+        "label": "Normal (100%)",
+        "value": 100
+      },
+      {
+        "label": "Fast (150%)",
+        "value": 150
+      },
+      {
+        "label": "Very fast (200%)",
+        "value": 200
+      }
     ]
   },
   {
@@ -65,13 +94,24 @@
     "defaultValue": 200,
     "placeholder": false,
     "options": [
-      { "label": "Tiny (160px)", "value": 160 },
-      { "label": "Small (200px)", "value": 200 },
-      { "label": "Medium (280px)", "value": 280 },
-      { "label": "Large (400px)", "value": 400 }
+      {
+        "label": "Tiny (160px)",
+        "value": 160
+      },
+      {
+        "label": "Small (200px)",
+        "value": 200
+      },
+      {
+        "label": "Medium (280px)",
+        "value": 280
+      },
+      {
+        "label": "Large (400px)",
+        "value": 400
+      }
     ]
   },
-
   {
     "type": "separator",
     "label": "Window edges",
@@ -83,7 +123,6 @@
     "label": "Keep the window on screen (it stops at screen edges that have no other monitor beyond them)",
     "defaultValue": true
   },
-
   {
     "type": "separator",
     "label": "Cursor",
@@ -103,13 +142,139 @@
     "defaultValue": 600,
     "placeholder": false,
     "options": [
-      { "label": "Short (300 ms)", "value": 300 },
-      { "label": "Normal (600 ms)", "value": 600 },
-      { "label": "Long (1000 ms)", "value": 1000 },
-      { "label": "Very long (1500 ms)", "value": 1500 }
+      {
+        "label": "Short (300 ms)",
+        "value": 300
+      },
+      {
+        "label": "Normal (600 ms)",
+        "value": 600
+      },
+      {
+        "label": "Long (1000 ms)",
+        "value": 1000
+      },
+      {
+        "label": "Very long (1500 ms)",
+        "value": 1500
+      }
     ]
   },
-
+  {
+    "type": "separator",
+    "label": "Goofy gummy mode",
+    "margin": "16px 0 8px 0"
+  },
+  {
+    "type": "checkbox",
+    "property": "zen.pipgestures.gummy",
+    "defaultValue": false,
+    "label": "Gummy mode: flick the window and it peels, stretches, bounces off the screen edges and wobbles back"
+  },
+  {
+    "type": "dropdown",
+    "property": "zen.pipgestures.gummyStretch",
+    "label": "How far the sides peel back when you move fast",
+    "value": "number",
+    "defaultValue": 100,
+    "placeholder": false,
+    "options": [
+      {
+        "label": "Off (no peeling)",
+        "value": 0
+      },
+      {
+        "label": "Subtle",
+        "value": 50
+      },
+      {
+        "label": "Gummy",
+        "value": 100
+      },
+      {
+        "label": "Extra",
+        "value": 150
+      },
+      {
+        "label": "Cartoon",
+        "value": 250
+      }
+    ]
+  },
+  {
+    "type": "dropdown",
+    "property": "zen.pipgestures.gummySpring",
+    "label": "Springiness (how long it wobbles)",
+    "value": "number",
+    "defaultValue": 100,
+    "placeholder": false,
+    "options": [
+      {
+        "label": "Stiff",
+        "value": 50
+      },
+      {
+        "label": "Gummy",
+        "value": 100
+      },
+      {
+        "label": "Jelly",
+        "value": 150
+      },
+      {
+        "label": "Wobbly",
+        "value": 250
+      }
+    ]
+  },
+  {
+    "type": "dropdown",
+    "property": "zen.pipgestures.gummyBounce",
+    "label": "Bounciness off the screen edges (needs \"Keep the window on screen\")",
+    "value": "number",
+    "defaultValue": 70,
+    "placeholder": false,
+    "options": [
+      {
+        "label": "None (just squishes)",
+        "value": 0
+      },
+      {
+        "label": "Soft",
+        "value": 40
+      },
+      {
+        "label": "Bouncy",
+        "value": 70
+      },
+      {
+        "label": "Super bouncy",
+        "value": 90
+      }
+    ]
+  },
+  {
+    "type": "dropdown",
+    "property": "zen.pipgestures.gummyFriction",
+    "label": "How far a thrown window slides",
+    "value": "number",
+    "defaultValue": 100,
+    "placeholder": false,
+    "options": [
+      {
+        "label": "Slippery (long slides)",
+        "value": 40
+      },
+      {
+        "label": "Normal",
+        "value": 100
+      },
+      {
+        "label": "Sticky (short slides)",
+        "value": 200
+      }
+    ]
+  },
   {
     "type": "separator",
     "label": "Troubleshooting",

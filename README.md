@@ -7,6 +7,16 @@ Two-finger move and pinch-to-resize for Picture-in-Picture windows in [Zen Brows
 - The cursor hides while you gesture and travels with the window, then comes back at the window's center.
 - The window stops at screen edges that have no other monitor beyond them, so it can't be clipped. Edges that border another monitor stay open.
 
+## Gummy mode
+
+An optional, goofy mode (off by default; turn it on in the settings). Flick a window and it behaves like it's made of gummy:
+
+- The sides **peel back** along the direction you're pushing, so the window and the picture stretch, then spring back with a wobble.
+- A hard flick **bounces off the screen edges**: the window squashes against the wall, rebounds, and keeps bouncing around the screen until it runs out of energy.
+- Touch it again while it's flying and you catch it.
+
+You can tune how far it peels, how springy it is, how bouncy the walls are and how far a throw slides. Bouncing needs "Keep the window on screen" (the walls) to be on.
+
 ## Install
 
 Install through [Sine](https://github.com/CosmoCreeper/Sine) by adding this repository, `11moo11/PiP-Gestures`, as a mod. Restart Zen after installing.
@@ -25,6 +35,11 @@ Open the mod's settings on the Sine mods page. Changes apply instantly. Every se
 | Keep the window on screen | `keepOnScreen` | on |
 | Hide the cursor during a gesture | `hideCursor` | on |
 | Rest time before the cursor returns (ms) | `holdMs` | 600 |
+| Gummy mode | `gummy` | off |
+| Peel amount (%) | `gummyStretch` | 100 |
+| Springiness (%) | `gummySpring` | 100 |
+| Wall bounciness (%) | `gummyBounce` | 70 |
+| Slide friction (%) | `gummyFriction` | 100 |
 | Debug mode | `debug` | off |
 | Save the debug log to the Desktop | `logToFile` | on (needs debug) |
 
