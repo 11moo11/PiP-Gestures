@@ -15,10 +15,23 @@
   //   zen.pipgestures.debug          (bool, default false)  -> logs to Browser Console (Cmd+Shift+J)
   //   zen.pipgestures.pinchSpeed     (int %, default 100)   -> pinch-to-resize sensitivity
   //   zen.pipgestures.panSpeed       (int %, default 100)   -> two-finger window-move sensitivity
+  //   zen.pipgestures.holdMs         (int ms, default 600)  -> how long fingers can rest still mid-move
+  //                                                            before the cursor comes back
   const P = Services.prefs;
   const debugOn = () => P.getBoolPref("zen.pipgestures.debug", false);
   const pinchSpeed = () => P.getIntPref("zen.pipgestures.pinchSpeed", 100) / 100;
   const panSpeed = () => P.getIntPref("zen.pipgestures.panSpeed", 100) / 100;
+  const holdMs = () => P.getIntPref("zen.pipgestures.holdMs", 600);
+
+  // With a single monitor the PiP window is kept fully on screen; with several we let it roam.
+  const screenMgr = Cc["@mozilla.org/gfx/screenmanager;1"].getService(Ci.nsIScreenManager);
+  const isSingleScreen = () => {
+    try {
+      return screenMgr.numberOfScreens <= 1;
+    } catch (e) {
+      return true;
+    }
+  };
 
   let logCount = 0;
   const LOG_FILE = (() => {
@@ -89,14 +102,21 @@
       g.t = now;
     }
 
-    // Keep at least part of the window reachable on screen.
     function keepOnScreen() {
       const sc = win.screen;
       const left = sc.availLeft || 0;
       const top = sc.availTop || 0;
-      const margin = 60;
-      g.x = clamp(g.x, left - g.w + margin, left + sc.availWidth - margin);
-      g.y = clamp(g.y, top, top + sc.availHeight - margin);
+      if (isSingleScreen()) {
+        // Active repel: the window can't cross any screen edge (menu bar and Dock excluded),
+        // and a window that is already out of bounds is pulled back in on the next gesture.
+        g.x = clamp(g.x, left, Math.max(left, left + sc.availWidth - Math.ceil(g.w)));
+        g.y = clamp(g.y, top, Math.max(top, top + sc.availHeight - Math.ceil(g.h)));
+      } else {
+        // Several monitors: let it travel between them, but keep part of it reachable.
+        const margin = 60;
+        g.x = clamp(g.x, left - g.w + margin, left + sc.availWidth - margin);
+        g.y = clamp(g.y, top, top + sc.availHeight - margin);
+      }
     }
 
     // The OS delivers scroll events to whichever window is under the cursor, so once the
@@ -168,20 +188,24 @@
     let curFx = 0.5;
     let curFy = 0.5;
 
-    function endGesture() {
+    function endGesture(reason) {
+      if (!gesturing) return;
       gesturing = false;
+      if (idleTimer) win.clearTimeout(idleTimer);
       idleTimer = null;
+      recent.length = 0;
       // The window has settled by now; park the (still hidden) cursor at the centre of where it
       // ended up, then reveal it a moment later so the jump itself is never seen.
       const a = actualCentre();
-      log("gesture end after " + evN + " events; target=(" + Math.round(g.x) + "," + Math.round(g.y) + " " +
+      log("gesture end (" + (typeof reason === "string" ? reason : "idle") + ") after " + evN + " events; target=(" + Math.round(g.x) + "," + Math.round(g.y) + " " +
         Math.round(g.w) + "x" + Math.round(g.h) + ") actual=(" + win.screenX + "," + win.screenY + " " +
         win.outerWidth + "x" + win.outerHeight + ")");
       warpCursor(a[0], a[1]);
-      win.setTimeout(() => { if (!gesturing) showCursor(); }, 80);
+      // Just long enough for the cursor to land before it's revealed.
+      win.setTimeout(() => { if (!gesturing) showCursor(); }, 30);
     }
 
-    function touchGesture(e) {
+    function touchGesture(e, isPinch) {
       if (!gesturing) {
         gesturing = true;
         evN = 0;
@@ -194,7 +218,9 @@
         hideCursor();
       }
       if (idleTimer) win.clearTimeout(idleTimer);
-      idleTimer = win.setTimeout(endGesture, 200);
+      // A trackpad sends nothing while fingers rest, so "paused" and "lifted" look the same here.
+      // Pauses get a generous grace period for moves; lifts with momentum are caught separately.
+      idleTimer = win.setTimeout(endGesture, isPinch ? 250 : holdMs());
     }
 
     function commit(resized) {
@@ -212,7 +238,9 @@
     // Resize by `factor` around the window's centre.
     function resizeBy(factor) {
       sync();
-      const maxW = win.screen.availWidth;
+      const sc = win.screen;
+      // On a single screen the window must also fit vertically.
+      const maxW = isSingleScreen() ? Math.min(sc.availWidth, sc.availHeight * g.aspect) : sc.availWidth;
       const newW = clamp(g.w * factor, MIN_W, maxW);
       const newH = newW / g.aspect;
       g.x -= (newW - g.w) / 2;
@@ -244,6 +272,34 @@
       return pending >= START_DISTANCE;
     }
 
+    // Momentum: after the fingers lift, macOS keeps sending wheel events whose size fades out
+    // smoothly (~0.8s). That's the one reliable "fingers are up" signal we get, so we detect the
+    // fade, end the gesture immediately (cursor back at once) and swallow the rest of the coast.
+    const recent = []; // magnitudes of the latest events in this gesture
+    let coasting = false;
+    let coastMag = 0;
+    let coastRises = 0;
+    let coastTimer = null;
+    function looksLikeMomentum() {
+      const n = 8;
+      if (recent.length < n) return false;
+      const r = recent.slice(-n);
+      let drops = 0;
+      for (let i = 1; i < n; i++) {
+        if (r[i] > r[i - 1]) return false;
+        if (r[i] < r[i - 1]) drops++;
+      }
+      const ratio = r[n - 1] / r[0];
+      return r[0] >= 12 && drops >= 5 && ratio >= 0.6 && ratio <= 0.97;
+    }
+    function armCoastEnd() {
+      if (coastTimer) win.clearTimeout(coastTimer);
+      coastTimer = win.setTimeout(() => {
+        coasting = false;
+        coastTimer = null;
+      }, 150);
+    }
+
     // Log the first events of every gesture, then every 10th, so long gestures stay readable.
     function logEvent(e) {
       evN++;
@@ -260,8 +316,33 @@
       (e) => {
         e.preventDefault();
         e.stopPropagation();
+        const mag = e.ctrlKey ? Math.abs(e.deltaY) : Math.hypot(e.deltaX, e.deltaY);
+        if (coasting) {
+          // Still fading out? Swallow it. A fresh touch shows up as a jump, or as events that
+          // stop shrinking.
+          const resumed = mag > coastMag * 1.25 + 2 || (mag >= 8 && mag >= coastMag && ++coastRises >= 3);
+          if (mag < coastMag) coastRises = 0;
+          if (!resumed) {
+            coastMag = mag;
+            armCoastEnd();
+            return;
+          }
+          coasting = false;
+          recent.length = 0;
+          log("new touch while coasting");
+        }
         if (!shouldStart(e)) return;
-        touchGesture(e);
+        touchGesture(e, e.ctrlKey);
+        recent.push(mag);
+        if (recent.length > 8) recent.shift();
+        if (looksLikeMomentum()) {
+          coasting = true;
+          coastMag = mag;
+          coastRises = 0;
+          endGesture("fingers lifted");
+          armCoastEnd();
+          return;
+        }
         if (e.ctrlKey) {
           // Pinch out -> negative deltaY -> bigger window.
           resizeBy(Math.exp(-e.deltaY * 0.005 * pinchSpeed()));
@@ -328,5 +409,5 @@
   try {
     P.setCharPref("zen.pipgestures.loaded", new Date().toISOString());
   } catch (e) {}
-  log("PiP Gestures v0.3.4 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
+  log("PiP Gestures v0.3.5 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
 })();
