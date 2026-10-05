@@ -3,7 +3,7 @@
   "name": "PiP Gestures",
   "description": "Two-finger move and pinch-to-resize for Picture-in-Picture windows, like Arc.",
   "homepage": "",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "createdAt": "2026-10-04",
   "updatedAt": "2026-10-05T00:00:00Z",
   "fork": ["zen"],
