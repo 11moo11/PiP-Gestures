@@ -29,6 +29,7 @@
     minWidth: 200,      // px - smallest the window can be pinched down to
     hideCursor: true,   // hide the cursor and carry it along with the window during a gesture
     holdMs: 600,        // ms - how long resting fingers can pause mid-move before the cursor returns
+    focusOnHover: true, // focus the PiP while the cursor is over it, so pinch works without clicking it first
     gummy: false,       // goofy gummy mode: the window peels, stretches, bounces and wobbles
     gummyStretch: 100,  // % - how far the trailing sides peel back when you move fast
     gummySpring: 100,   // % - springiness: higher = looser, longer wobble
@@ -722,6 +723,7 @@
     function onWheel(e) {
       // A gesture that's switched off is left completely alone (default behaviour applies).
       if (!pref(e.ctrlKey ? "enablePinch" : "enableMove")) return;
+      hoverEnter(); // scrolls reach an unfocused PiP, so this is a reliable "the cursor is here" signal
       e.preventDefault();
       e.stopPropagation();
       const mag = e.ctrlKey ? Math.abs(e.deltaY) : Math.hypot(e.deltaX, e.deltaY);
@@ -772,6 +774,52 @@
       else moveBy(-e.deltaX * unit * sp, -e.deltaY * unit * sp);
       logEvent(e);
     }
+    // ---- Focus follows hover ----
+    // macOS only delivers pinch gestures to the *focused* window (scrolls go to whatever is under the
+    // cursor), and the page-zoom handling of the main window swallows a pinch meant for an unfocused
+    // PiP. So while the cursor rests over the PiP we focus it, and give focus back to the window that
+    // had it once the cursor leaves. We never do this when another app is frontmost, or when the
+    // address bar / a text field has focus.
+    let hoverTimer = null;
+    let prevActive = null;
+    let focusedByUs = false;
+    function hoverEnter() {
+      if (focusedByUs || hoverTimer || !pref("focusOnHover")) return;
+      hoverTimer = win.setTimeout(() => { // a short dwell so just passing over the window doesn't flicker focus
+        hoverTimer = null;
+        try {
+          const active = Services.focus.activeWindow;
+          if (!active || active === win) return; // another app is frontmost, or the PiP is already focused
+          const ae = active.document && active.document.activeElement;
+          if (ae && /^(input|textarea)$/i.test(ae.localName)) return; // don't steal typing focus
+          prevActive = active;
+          focusedByUs = true;
+          win.focus();
+          log("focus-on-hover: focused the PiP so a pinch reaches it");
+        } catch (e) {
+          log("focus-on-hover failed: " + e, true);
+        }
+      }, 80);
+    }
+    function hoverLeave(e) {
+      // A mouseout between elements inside the window isn't a real leave; check the coordinates.
+      if (e && e.screenX >= win.screenX && e.screenX < win.screenX + win.outerWidth &&
+          e.screenY >= win.screenY && e.screenY < win.screenY + win.outerHeight) return;
+      if (hoverTimer) win.clearTimeout(hoverTimer);
+      hoverTimer = null;
+      if (!focusedByUs || gesturing || GM.running) return;
+      focusedByUs = false;
+      try {
+        if (prevActive && !prevActive.closed && Services.focus.activeWindow === win) {
+          prevActive.focus();
+          log("focus-on-hover: cursor left, gave focus back");
+        }
+      } catch (err) {}
+      prevActive = null;
+    }
+    doc.addEventListener("mousemove", hoverEnter, true);
+    doc.addEventListener("mouseout", (e) => { if (!e.relatedTarget) hoverLeave(e); }, true);
+
     doc.addEventListener("wheel", onWheel, { capture: true, passive: false });
     win.__pipGesturesController = { onWheel };
   }
@@ -867,5 +915,5 @@
   try {
     P.setCharPref("zen.pipgestures.loaded", new Date().toISOString());
   } catch (e) {}
-  log("PiP Gestures v0.5.1 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
+  log("PiP Gestures v0.5.2 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
 })();
