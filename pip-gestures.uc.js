@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         PiP Gestures
-// @description  Two-finger pan and pinch-to-zoom inside Picture-in-Picture windows (Zen / Firefox, macOS trackpad)
+// @description  Two-finger move and pinch-to-resize for Picture-in-Picture windows (Zen / Firefox, macOS trackpad)
 // @include      main
 // ==/UserScript==
 
@@ -10,12 +10,11 @@
   // Several browser windows may load this script; only the first one needs to watch.
   // (Each PiP window is also guarded individually below.)
   const PIP_URL = /pictureinpicture\/player\.xhtml/;
-  const MAX_ZOOM = 8;
-
+  
   // Optional about:config prefs (all are created on demand, none are required):
   //   zen.pipgestures.debug          (bool, default false)  -> logs to Browser Console (Cmd+Shift+J)
-  //   zen.pipgestures.pinchSpeed     (int %, default 100)   -> pinch sensitivity
-  //   zen.pipgestures.panSpeed       (int %, default 100)   -> two-finger pan sensitivity
+  //   zen.pipgestures.pinchSpeed     (int %, default 100)   -> pinch-to-resize sensitivity
+  //   zen.pipgestures.panSpeed       (int %, default 100)   -> two-finger window-move sensitivity
   const P = Services.prefs;
   const debugOn = () => P.getBoolPref("zen.pipgestures.debug", false);
   const pinchSpeed = () => P.getIntPref("zen.pipgestures.pinchSpeed", 100) / 100;
@@ -69,148 +68,88 @@
     win.__pipGesturesAttached = true;
     log("Attached to a PiP window. Video element: <" + view.localName + "#" + view.id + ">", true);
 
-    view.style.transformOrigin = "0 0";
+    // The gestures move/resize the PiP *window* itself:
+    //   two-finger scroll -> move the window
+    //   pinch (arrives as ctrl+wheel) -> resize the window, keeping its aspect ratio
+    // Window moves/resizes apply asynchronously, so we track our own target geometry
+    // across a burst of events and only re-read the real geometry after a short idle gap.
+    const IDLE_MS = 250;
+    const MIN_W = 200;
+    const g = { x: 0, y: 0, w: 0, h: 0, aspect: 1, t: 0 };
 
-    // Current view state: screen point = (tx, ty) + scale * original point
-    let scale = 1;
-    let tx = 0;
-    let ty = 0;
-
-    const W = () => doc.documentElement.clientWidth || win.innerWidth;
-    const H = () => doc.documentElement.clientHeight || win.innerHeight;
-
-    function clampPan() {
-      if (scale <= 1) {
-        tx = 0;
-        ty = 0;
-        return;
+    function sync() {
+      const now = Date.now();
+      if (now - g.t > IDLE_MS || !g.w) {
+        g.x = win.screenX;
+        g.y = win.screenY;
+        g.w = win.outerWidth;
+        g.h = win.outerHeight;
+        g.aspect = g.w / g.h || 16 / 9;
       }
-      tx = clamp(tx, W() * (1 - scale), 0);
-      ty = clamp(ty, H() * (1 - scale), 0);
+      g.t = now;
     }
 
-    function apply() {
-      view.style.transform =
-        scale === 1 && tx === 0 && ty === 0
-          ? ""
-          : "translate(" + tx + "px, " + ty + "px) scale(" + scale + ")";
+    // Keep at least part of the window reachable on screen.
+    function keepOnScreen() {
+      const sc = win.screen;
+      const left = sc.availLeft || 0;
+      const top = sc.availTop || 0;
+      const margin = 60;
+      g.x = clamp(g.x, left - g.w + margin, left + sc.availWidth - margin);
+      g.y = clamp(g.y, top, top + sc.availHeight - margin);
     }
 
-    function reset() {
-      scale = 1;
-      tx = 0;
-      ty = 0;
-      apply();
+    function commit(resized) {
+      keepOnScreen();
+      try {
+        if (resized) win.resizeTo(Math.round(g.w), Math.round(g.h));
+        win.moveTo(Math.round(g.x), Math.round(g.y));
+      } catch (e) {
+        log("move/resize failed: " + e, true);
+      }
     }
 
-    // Zoom while keeping the point under the fingers (fx, fy) fixed.
-    function zoomAt(newScale, fx, fy) {
-      newScale = clamp(newScale, 1, MAX_ZOOM);
-      const k = newScale / scale;
-      tx = fx - (fx - tx) * k;
-      ty = fy - (fy - ty) * k;
-      scale = newScale;
-      clampPan();
-      apply();
+    // Resize by `factor` around the window's centre.
+    function resizeBy(factor) {
+      sync();
+      const maxW = win.screen.availWidth;
+      const newW = clamp(g.w * factor, MIN_W, maxW);
+      const newH = newW / g.aspect;
+      g.x -= (newW - g.w) / 2;
+      g.y -= (newH - g.h) / 2;
+      g.w = newW;
+      g.h = newH;
+      commit(true);
     }
 
-    const focal = (e) => ({
-      x: typeof e.clientX === "number" && (e.clientX || e.clientY) ? e.clientX : W() / 2,
-      y: typeof e.clientY === "number" && (e.clientX || e.clientY) ? e.clientY : H() / 2,
-    });
-
-    // --- Pinch (macOS trackpad) -------------------------------------------
-    // Diagnostic: log the first few gesture events of any kind that reach this window.
-    let gestureLogs = 0;
-    for (const t of ["MozMagnifyGestureStart", "MozMagnifyGestureUpdate", "MozMagnifyGesture",
-                     "MozRotateGestureStart", "MozSwipeGestureMayStart", "MozTapGesture"]) {
-      win.addEventListener(t, (e) => {
-        if (gestureLogs++ < 8) log("gesture event seen: " + t + " delta=" + e.delta, true);
-      }, true);
+    function moveBy(dx, dy) {
+      sync();
+      g.x += dx;
+      g.y += dy;
+      commit(false);
     }
-    win.addEventListener(
-      "MozMagnifyGestureStart",
-      (e) => {
-        e.preventDefault();
-        log("pinch start");
-      },
-      true
-    );
 
-    win.addEventListener(
-      "MozMagnifyGestureUpdate",
-      (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const f = focal(e);
-        const factor = clamp(1 + (e.delta / 100) * pinchSpeed(), 0.5, 1.5);
-        log("pinch delta=" + e.delta + " factor=" + factor.toFixed(3) + " scale=" + scale.toFixed(2));
-        zoomAt(scale * factor, f.x, f.y);
-      },
-      true
-    );
-
-    win.addEventListener(
-      "MozMagnifyGesture",
-      (e) => {
-        e.preventDefault();
-        // Snap back to normal if the user pinched out to roughly 1x.
-        if (scale < 1.04) reset();
-        log("pinch end scale=" + scale.toFixed(2));
-      },
-      true
-    );
-
-    // --- Two-finger scroll = pan; ctrl+wheel = pinch fallback --------------
     let wheelLogs = 0;
     doc.addEventListener(
       "wheel",
       (e) => {
-        // Diagnostic: confirm wheel events reach us at all (first few only, to keep the log readable).
-        if (wheelLogs < 8) {
-          wheelLogs++;
-          log("wheel seen ctrl=" + e.ctrlKey + " dx=" + e.deltaX + " dy=" + e.deltaY +
-            " mode=" + e.deltaMode + " scale=" + scale.toFixed(2) + " target=<" + (e.target && e.target.localName) + ">", true);
+        if (wheelLogs++ < 8) {
+          log("wheel ctrl=" + e.ctrlKey + " dx=" + e.deltaX + " dy=" + e.deltaY + " mode=" + e.deltaMode);
         }
-        if (e.ctrlKey) {
-          // Some setups deliver pinch as ctrl+wheel.
-          e.preventDefault();
-          e.stopPropagation();
-          const f = focal(e);
-          log("ctrl+wheel deltaY=" + e.deltaY);
-          zoomAt(scale * Math.exp(-e.deltaY * 0.01 * pinchSpeed()), f.x, f.y);
-          return;
-        }
-        if (scale <= 1) return; // nothing to pan; leave default behavior alone
         e.preventDefault();
         e.stopPropagation();
-        const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? H() : 1;
+        if (e.ctrlKey) {
+          // Pinch out -> negative deltaY -> bigger window.
+          resizeBy(Math.exp(-e.deltaY * 0.005 * pinchSpeed()));
+          return;
+        }
+        const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? win.innerHeight : 1;
         const sp = panSpeed();
-        log("pan dx=" + e.deltaX + " dy=" + e.deltaY);
-        tx -= e.deltaX * unit * sp;
-        ty -= e.deltaY * unit * sp;
-        clampPan();
-        apply();
+        // Window follows the fingers (natural scrolling reports the opposite sign).
+        moveBy(-e.deltaX * unit * sp, -e.deltaY * unit * sp);
       },
       { capture: true, passive: false }
     );
-
-    // --- Cmd+0 resets the view --------------------------------------------
-    doc.addEventListener(
-      "keydown",
-      (e) => {
-        if (e.metaKey && e.key === "0") {
-          e.preventDefault();
-          reset();
-        }
-      },
-      true
-    );
-
-    win.addEventListener("resize", () => {
-      clampPan();
-      apply();
-    });
   }
 
   function consider(win) {
@@ -263,5 +202,5 @@
   try {
     P.setCharPref("zen.pipgestures.loaded", new Date().toISOString());
   } catch (e) {}
-  log("PiP Gestures v0.2 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
+  log("PiP Gestures v0.3 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
 })();

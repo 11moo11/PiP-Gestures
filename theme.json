@@ -1,9 +1,9 @@
 {
   "id": "pip-gestures",
   "name": "PiP Gestures",
-  "description": "Two-finger pan and pinch-to-zoom inside Picture-in-Picture windows, like Arc.",
+  "description": "Two-finger move and pinch-to-resize for Picture-in-Picture windows, like Arc.",
   "homepage": "",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "createdAt": "2026-10-04",
   "updatedAt": "2026-10-05T00:00:00Z",
   "fork": ["zen"],
