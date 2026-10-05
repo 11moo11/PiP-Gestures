@@ -22,10 +22,28 @@
   const panSpeed = () => P.getIntPref("zen.pipgestures.panSpeed", 100) / 100;
 
   let logCount = 0;
-  function log(msg) {
-    if (!debugOn()) return;
-    if (++logCount > 400) return; // keep the console readable
-    Services.console.logStringMessage("[PiP Gestures] " + msg);
+  const LOG_FILE = (() => {
+    try {
+      return PathUtils.join(Services.dirsvc.get("Desk", Ci.nsIFile).path, "PiP_Gestures_log.txt");
+    } catch (e) {
+      return null;
+    }
+  })();
+
+  // force = true logs even when the debug pref is off (used for the startup line)
+  function log(msg, force) {
+    if (!force && !debugOn()) return;
+    if (++logCount > 400) return; // keep it readable
+    const line = "[PiP Gestures] " + msg;
+    try { console.log(line); } catch (e) {}
+    try { Services.console.logStringMessage(line); } catch (e) {}
+    if (LOG_FILE) {
+      try {
+        IOUtils.writeUTF8(LOG_FILE, new Date().toISOString() + " " + line + "\n", {
+          mode: "appendOrCreate",
+        });
+      } catch (e) {}
+    }
   }
 
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -45,10 +63,10 @@
     const doc = win.document;
     const view = doc.getElementById("browser") || doc.querySelector("browser");
     if (!view) {
-      log("PiP window found, but could not find the video element.");
+      log("PiP window found, but could not find the video element.", true);
       return;
     }
-    log("Attached to a PiP window. Video element: <" + view.localName + "#" + view.id + ">");
+    log("Attached to a PiP window. Video element: <" + view.localName + "#" + view.id + ">", true);
 
     view.style.transformOrigin = "0 0";
 
@@ -221,5 +239,8 @@
   // ...and any that are already open.
   for (const w of Services.wm.getEnumerator(null)) consider(w);
 
-  log("PiP Gestures loaded.");
+  try {
+    P.setCharPref("zen.pipgestures.loaded", new Date().toISOString());
+  } catch (e) {}
+  log("PiP Gestures v0.2 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
 })();
