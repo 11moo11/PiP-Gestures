@@ -101,7 +101,8 @@
 
     // The OS delivers scroll events to whichever window is under the cursor, so once the
     // window slides out from under the pointer the gesture would stop. Like Arc, we hide the
-    // cursor while gesturing and keep it at the centre of the window as it moves; when the
+    // cursor while gesturing and carry it along with the window, keeping it at the same spot
+    // relative to the window (so there's no visible jump when a gesture starts). When the
     // gesture ends the cursor reappears at the window's centre.
     const wu = win.windowUtils;
     let warpFailed = false;
@@ -131,34 +132,60 @@
       }
     }
 
-    const targetCentre = () => [g.x + g.w / 2, g.y + g.h / 2];
     const actualCentre = () => [win.screenX + win.outerWidth / 2, win.screenY + win.outerHeight / 2];
+
+    // Hide the cursor everywhere in the window. A plain `cursor: none` on the root isn't enough
+    // because elements under the pointer (the controls overlay) set their own cursor.
+    let hideStyle = null;
+    function hideCursor() {
+      view.style.pointerEvents = "none"; // let the chrome document, not the video process, pick the cursor
+      doc.documentElement.style.cursor = "none";
+      if (!hideStyle) {
+        hideStyle = doc.createElementNS("http://www.w3.org/1999/xhtml", "style");
+        hideStyle.textContent = "* { cursor: none !important; }";
+        (doc.head || doc.documentElement).appendChild(hideStyle);
+      }
+    }
+    function showCursor() {
+      view.style.pointerEvents = "";
+      doc.documentElement.style.cursor = "";
+      if (hideStyle) {
+        hideStyle.remove();
+        hideStyle = null;
+      }
+    }
 
     let gesturing = false;
     let idleTimer = null;
     let evN = 0;
+    // Where the cursor sits inside the window, as a fraction of its size.
+    let curFx = 0.5;
+    let curFy = 0.5;
+
     function endGesture() {
       gesturing = false;
       idleTimer = null;
-      // The window has settled by now; leave the cursor at the centre of where it ended up.
+      // The window has settled by now; park the (still hidden) cursor at the centre of where it
+      // ended up, then reveal it a moment later so the jump itself is never seen.
       const a = actualCentre();
       log("gesture end after " + evN + " events; target=(" + Math.round(g.x) + "," + Math.round(g.y) + " " +
         Math.round(g.w) + "x" + Math.round(g.h) + ") actual=(" + win.screenX + "," + win.screenY + " " +
         win.outerWidth + "x" + win.outerHeight + ")");
       warpCursor(a[0], a[1]);
-      doc.documentElement.style.cursor = "";
-      view.style.pointerEvents = "";
+      win.setTimeout(() => { if (!gesturing) showCursor(); }, 80);
     }
-    function touchGesture() {
+
+    function touchGesture(e) {
       if (!gesturing) {
         gesturing = true;
         evN = 0;
-        const a = actualCentre();
-        log("gesture start; warping cursor to centre (" + Math.round(a[0]) + "," + Math.round(a[1]) + ")");
-        warpCursor(a[0], a[1]);
-        // Let the chrome document (not the video's own process) decide the cursor, then hide it.
-        view.style.pointerEvents = "none";
-        doc.documentElement.style.cursor = "none";
+        // Remember where the cursor is within the window; it keeps that spot as the window moves.
+        const fx = (e.screenX - win.screenX) / (win.outerWidth || 1);
+        const fy = (e.screenY - win.screenY) / (win.outerHeight || 1);
+        curFx = Number.isFinite(fx) ? clamp(fx, 0.05, 0.95) : 0.5;
+        curFy = Number.isFinite(fy) ? clamp(fy, 0.05, 0.95) : 0.5;
+        log("gesture start; cursor at " + curFx.toFixed(2) + "," + curFy.toFixed(2) + " of the window");
+        hideCursor();
       }
       if (idleTimer) win.clearTimeout(idleTimer);
       idleTimer = win.setTimeout(endGesture, 200);
@@ -172,12 +199,8 @@
       } catch (e) {
         log("move/resize failed: " + e, true);
       }
-      // Follow the window's *target* position: the reported position can lag behind the move,
-      // which would pull the cursor back to where the window used to be.
-      if (gesturing) {
-        const t = targetCentre();
-        warpCursor(t[0], t[1]);
-      }
+      // Carry the cursor along with the window so it stays under the pointer's original spot.
+      if (gesturing) warpCursor(g.x + curFx * g.w, g.y + curFy * g.h);
     }
 
     // Resize by `factor` around the window's centre.
@@ -230,7 +253,7 @@
         e.preventDefault();
         e.stopPropagation();
         if (!shouldStart(e)) return;
-        touchGesture();
+        touchGesture(e);
         if (e.ctrlKey) {
           // Pinch out -> negative deltaY -> bigger window.
           resizeBy(Math.exp(-e.deltaY * 0.005 * pinchSpeed()));
@@ -297,5 +320,5 @@
   try {
     P.setCharPref("zen.pipgestures.loaded", new Date().toISOString());
   } catch (e) {}
-  log("PiP Gestures v0.3.2 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
+  log("PiP Gestures v0.3.3 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
 })();
