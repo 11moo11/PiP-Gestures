@@ -57,6 +57,12 @@
     "defaultValue": true
   },
   {
+    "type": "checkbox",
+    "property": "zen.pipgestures.focusOnHover",
+    "defaultValue": true,
+    "label": "Let pinch work without clicking the PiP first (the window takes focus while your cursor is over it, and focus goes back when you leave)"
+  },
+  {
     "type": "dropdown",
     "property": "zen.pipgestures.pinchSpeed",
     "label": "Pinch speed",
