@@ -1,0 +1,14 @@
+{
+  "id": "7c1f0e52-3b8a-4d6e-9a41-5e2b8d0f6a13",
+  "name": "PiP Gestures",
+  "description": "Two-finger pan and pinch-to-zoom inside Picture-in-Picture windows, like Arc.",
+  "homepage": "",
+  "style": {},
+  "readme": "",
+  "image": "",
+  "author": "Nick",
+  "version": "0.1.0",
+  "tags": ["picture-in-picture", "gestures", "trackpad"],
+  "createdAt": "2026-10-04",
+  "updatedAt": "2026-10-04"
+}
