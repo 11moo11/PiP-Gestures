@@ -105,12 +105,18 @@
     // relative to the window (so there's no visible jump when a gesture starts). When the
     // gesture ends the cursor reappears at the window's centre.
     const wu = win.windowUtils;
+    log("scales: devicePixelRatio=" + win.devicePixelRatio + " screenPixelsPerCSSPixel=" + wu.screenPixelsPerCSSPixel, true);
     let warpFailed = false;
     let newSignature = true; // sendNativeMouseEvent(x, y, msg, button, modifiers, element, observer)
     // (cx, cy) is the point to put the cursor at, in screen CSS pixels.
+    // sendNativeMouseEvent wants *device* pixels. screenPixelsPerCSSPixel is 1 on a Retina Mac
+    // (it counts OS points), which put the cursor at half the intended coordinates; the window's
+    // devicePixelRatio is the device-pixels-per-CSS-pixel we actually need.
+    let lastWarp = null;
     function warpCursor(cx, cy) {
       try {
-        const scale = wu.screenPixelsPerCSSPixel || 1;
+        const scale = win.devicePixelRatio || 1;
+        lastWarp = [Math.round(cx), Math.round(cy)];
         const x = cx * scale;
         const y = cy * scale;
         const el = doc.documentElement;
@@ -244,7 +250,9 @@
       if (evN > 25 && evN % 10) return;
       log("#" + evN + " " + (e.ctrlKey ? "pinch" : "move") + " dx=" + e.deltaX + " dy=" + e.deltaY +
         " target=(" + Math.round(g.x) + "," + Math.round(g.y) + " " + Math.round(g.w) + "x" + Math.round(g.h) +
-        ") actual=(" + win.screenX + "," + win.screenY + ")");
+        ") actual=(" + win.screenX + "," + win.screenY + ")" +
+        " cursor=(" + e.screenX + "," + e.screenY + ")" +
+        (lastWarp ? " lastAskedCursor=(" + lastWarp[0] + "," + lastWarp[1] + ")" : ""));
     }
 
     doc.addEventListener(
@@ -320,5 +328,5 @@
   try {
     P.setCharPref("zen.pipgestures.loaded", new Date().toISOString());
   } catch (e) {}
-  log("PiP Gestures v0.3.3 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
+  log("PiP Gestures v0.3.4 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
 })();
