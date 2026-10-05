@@ -120,6 +120,14 @@
     });
 
     // --- Pinch (macOS trackpad) -------------------------------------------
+    // Diagnostic: log the first few gesture events of any kind that reach this window.
+    let gestureLogs = 0;
+    for (const t of ["MozMagnifyGestureStart", "MozMagnifyGestureUpdate", "MozMagnifyGesture",
+                     "MozRotateGestureStart", "MozSwipeGestureMayStart", "MozTapGesture"]) {
+      win.addEventListener(t, (e) => {
+        if (gestureLogs++ < 8) log("gesture event seen: " + t + " delta=" + e.delta, true);
+      }, true);
+    }
     win.addEventListener(
       "MozMagnifyGestureStart",
       (e) => {
@@ -154,9 +162,16 @@
     );
 
     // --- Two-finger scroll = pan; ctrl+wheel = pinch fallback --------------
+    let wheelLogs = 0;
     doc.addEventListener(
       "wheel",
       (e) => {
+        // Diagnostic: confirm wheel events reach us at all (first few only, to keep the log readable).
+        if (wheelLogs < 8) {
+          wheelLogs++;
+          log("wheel seen ctrl=" + e.ctrlKey + " dx=" + e.deltaX + " dy=" + e.deltaY +
+            " mode=" + e.deltaMode + " scale=" + scale.toFixed(2) + " target=<" + (e.target && e.target.localName) + ">", true);
+        }
         if (e.ctrlKey) {
           // Some setups deliver pinch as ctrl+wheel.
           e.preventDefault();
