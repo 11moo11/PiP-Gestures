@@ -9,6 +9,10 @@ Two-finger move and pinch-to-resize for Picture-in-Picture windows in [Zen Brows
 
 macOS only sends pinch gestures to the focused window, so while your cursor rests over a PiP window it takes focus (and gives it back when you leave). Switch this off with "Focus the PiP while hovering it" if you'd rather click the window first. It never takes focus while you're typing in the browser, or when another app is frontmost (a pinch can't reach the PiP then, since macOS sends it to the other app).
 
+### When another app is in front
+
+macOS only delivers pinch gestures to the active app, and only the active app can hide the cursor. So with another app in front of the browser, two-finger scrolling still moves the PiP, but pinching can't reach it and the cursor stays visible. **Hold Option and two-finger scroll** to resize instead; that works whether or not the browser or the PiP is focused (fingers up = bigger).
+
 ## Gummy mode
 
 An optional, goofy mode (off by default; turn it on in the settings). Flick a window and it behaves like it's made of gummy:
@@ -33,6 +37,7 @@ Open the mod's settings on the Sine mods page. Changes apply instantly. Every se
 | Move speed (%) | `panSpeed` | 100 |
 | Resize by pinching | `enablePinch` | on |
 | Focus the PiP while hovering it (so pinch works unfocused) | `focusOnHover` | on |
+| Resize with Option + two-finger scroll | `altResize` | on |
 | Pinch speed (%) | `pinchSpeed` | 100 |
 | Smallest width when pinching in (px) | `minWidth` | 200 |
 | Keep the window on screen | `keepOnScreen` | on |

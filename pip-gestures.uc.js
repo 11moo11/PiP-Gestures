@@ -30,6 +30,7 @@
     hideCursor: true,   // hide the cursor and carry it along with the window during a gesture
     holdMs: 600,        // ms - how long resting fingers can pause mid-move before the cursor returns
     focusOnHover: true, // focus the PiP while the cursor is over it, so pinch works without clicking it first
+    altResize: true,    // Option + two-finger scroll also resizes the window (works even when another app is frontmost)
     gummy: false,       // goofy gummy mode: the window peels, stretches, bounces and wobbles
     gummyStretch: 100,  // % - how far the trailing sides peel back when you move fast
     gummySpring: 100,   // % - springiness: higher = looser, longer wobble
@@ -709,7 +710,7 @@
     function logEvent(e) {
       evN++;
       if (evN > 25 && evN % 10) return;
-      log("#" + evN + " " + (e.ctrlKey ? "pinch" : "move") + " dx=" + e.deltaX + " dy=" + e.deltaY +
+      log("#" + evN + " " + (e.ctrlKey ? "pinch" : e.altKey && pref("altResize") ? "alt-resize" : "move") + " dx=" + e.deltaX + " dy=" + e.deltaY +
         " target=(" + Math.round(g.x) + "," + Math.round(g.y) + " " + Math.round(g.w) + "x" + Math.round(g.h) +
         ") actual=(" + win.screenX + "," + win.screenY + ")" +
         " cursor=(" + e.screenX + "," + e.screenY + ")" +
@@ -720,13 +721,28 @@
     // window under the cursor, so it arrives here directly; a pinch is only delivered to the focused
     // window, so for an unfocused PiP it arrives via the browser-window listener further down and is
     // handed to this function through win.__pipGesturesController.
+    let altResizeT = 0; // last Option+scroll resize event
     function onWheel(e) {
       // A gesture that's switched off is left completely alone (default behaviour applies).
-      if (!pref(e.ctrlKey ? "enablePinch" : "enableMove")) return;
+      // Resizing comes from a pinch (ctrl+wheel) or, as a fallback that macOS delivers even when another
+      // app is frontmost, Option + two-finger scroll.
+      const altResize = !e.ctrlKey && e.altKey && pref("altResize");
+      const resizing = e.ctrlKey || altResize;
+      if (!pref(resizing ? "enablePinch" : "enableMove")) return;
+      // If Option is released while the swipe's momentum is still fading, those leftover events arrive
+      // as plain scrolls; swallow them instead of letting them fling the window sideways.
+      const tAlt = Date.now();
+      if (!resizing && tAlt - altResizeT < 60) {
+        altResizeT = tAlt;
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (altResize) altResizeT = tAlt;
       hoverEnter(e); // scrolls reach an unfocused PiP, so this is a reliable "the cursor is here" signal
       e.preventDefault();
       e.stopPropagation();
-      const mag = e.ctrlKey ? Math.abs(e.deltaY) : Math.hypot(e.deltaX, e.deltaY);
+      const mag = resizing ? Math.abs(e.deltaY) : Math.hypot(e.deltaX, e.deltaY);
       lastWheelT = Date.now();
       // Gummy: while a throw is in flight, the trackpad's leftover momentum events are ignored. A
       // fresh touch (a pinch, a pause, or a jump in size) catches the window.
@@ -736,7 +752,7 @@
       GM.lastRawT = tRaw;
       GM.lastMag = mag;
       if (GM.swallow) {
-        if (e.ctrlKey || rawGap > 90 || mag > prevMag * 1.25 + 2) {
+        if (resizing || rawGap > 90 || mag > prevMag * 1.25 + 2) {
           GM.swallow = false;
           GM.bv.x = GM.bv.y = 0;
           log("gummy: caught the flying window");
@@ -750,7 +766,7 @@
         takeoverTimer = win.setTimeout(() => { takeover = false; }, 200);
       } else {
         if (!shouldStart(e)) return;
-        touchGesture(e, e.ctrlKey);
+        touchGesture(e, resizing);
         // A jump in size means a fresh touch rather than a fading coast.
         if (fading && recent.length && mag > recent[recent.length - 1] * 1.25 + 2) fading = false;
         recent.push(mag);
@@ -758,12 +774,13 @@
         if (!fading && looksLikeMomentum()) {
           fading = true;
           log("fingers lifted (momentum fade detected); letting the window coast");
-          touchGesture(e, e.ctrlKey); // re-arm the idle timer with the shorter coasting grace period
+          touchGesture(e, resizing); // re-arm the idle timer with the shorter coasting grace period
         }
       }
-      if (e.ctrlKey) {
-        // Pinch out -> negative deltaY -> bigger window.
-        resizeBy(Math.exp(-e.deltaY * 0.005 * pinchSpeed()));
+      if (resizing) {
+        // Pinch out -> negative deltaY -> bigger window. Option+scroll: fingers up -> bigger.
+        const f = e.ctrlKey ? Math.exp(-e.deltaY * 0.005 * pinchSpeed()) : Math.exp(e.deltaY * 0.0025 * pinchSpeed());
+        resizeBy(f);
         logEvent(e);
         return;
       }
@@ -786,6 +803,7 @@
     let lastPipMoveT = 0;   // last time the mouse moved over the PiP
     let lastMouse = null;   // last known cursor position, screen px
     let lastKeyT = 0;       // last keypress in a browser window
+    let lastSkipLogT = 0;
 
     const noteKey = () => { lastKeyT = Date.now(); };
     window.addEventListener("keydown", noteKey, true);
@@ -801,7 +819,12 @@
       const active = Services.focus.activeWindow;
       if (active === win) return;
       if (!active) {
-        log("focus-on-hover: skipped, another app is frontmost (a pinch can't reach the PiP then)");
+        // macOS gives pinches (and cursor control) only to the frontmost app, so there's nothing to do.
+        if (Date.now() - lastSkipLogT > 5000) {
+          lastSkipLogT = Date.now();
+          log("another app is frontmost: pinch can't reach the PiP and the cursor can't be hidden; " +
+            "scroll-to-move still works, and Option + two-finger scroll resizes");
+        }
         return;
       }
       if (Date.now() - lastKeyT < 1500) {
@@ -953,5 +976,5 @@
   try {
     P.setCharPref("zen.pipgestures.loaded", new Date().toISOString());
   } catch (e) {}
-  log("PiP Gestures v0.5.3 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
+  log("PiP Gestures v0.5.4 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
 })();
