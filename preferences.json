@@ -63,6 +63,12 @@
     "label": "Let pinch work without clicking the PiP first (the window takes focus while your cursor is over it, and focus goes back when you leave)"
   },
   {
+    "type": "checkbox",
+    "property": "zen.pipgestures.altResize",
+    "defaultValue": true,
+    "label": "Also resize with Option + two-finger scroll (fingers up = bigger). Works even when another app is in front, where macOS doesn't deliver pinches"
+  },
+  {
     "type": "dropdown",
     "property": "zen.pipgestures.pinchSpeed",
     "label": "Pinch speed",
