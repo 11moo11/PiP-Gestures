@@ -64,6 +64,12 @@
   },
   {
     "type": "checkbox",
+    "property": "zen.pipgestures.focusOtherApps",
+    "defaultValue": true,
+    "label": "When another app is in front, bring the browser forward as soon as you move or resize the PiP, so pinch and cursor hiding work (this can raise the main browser window too)"
+  },
+  {
+    "type": "checkbox",
     "property": "zen.pipgestures.altResize",
     "defaultValue": true,
     "label": "Also resize with Option + two-finger scroll (fingers up = bigger). Works even when another app is in front, where macOS doesn't deliver pinches"

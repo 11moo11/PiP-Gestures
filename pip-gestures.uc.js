@@ -30,6 +30,7 @@
     hideCursor: true,   // hide the cursor and carry it along with the window during a gesture
     holdMs: 600,        // ms - how long resting fingers can pause mid-move before the cursor returns
     focusOnHover: true, // focus the PiP while the cursor is over it, so pinch works without clicking it first
+    focusOtherApps: true, // when another app is frontmost, bring the browser forward as soon as you move/resize the PiP
     altResize: true,    // Option + two-finger scroll also resizes the window (works even when another app is frontmost)
     gummy: false,       // goofy gummy mode: the window peels, stretches, bounces and wobbles
     gummyStretch: 100,  // % - how far the trailing sides peel back when you move fast
@@ -804,6 +805,7 @@
     let lastMouse = null;   // last known cursor position, screen px
     let lastKeyT = 0;       // last keypress in a browser window
     let lastSkipLogT = 0;
+    let gestureWanted = false; // a scroll/resize (not just hovering) has happened over the PiP
 
     const noteKey = () => { lastKeyT = Date.now(); };
     window.addEventListener("keydown", noteKey, true);
@@ -815,16 +817,44 @@
     const cursorInside = (pt) => !!pt && pt[0] >= win.screenX && pt[0] < win.screenX + win.outerWidth &&
       pt[1] >= win.screenY && pt[1] < win.screenY + win.outerHeight;
 
-    function focusPip() {
+    // macOS gives pinches (and cursor control) only to the frontmost app. If another app is in front,
+    // make the browser the frontmost app (like Dia does) and put the PiP in front of the browser's
+    // windows. This can also raise the main browser window, which is the price of pinch and cursor
+    // hiding working; it's opt-out via the focusOtherApps setting.
+    let lastActivateT = 0;
+    function activateBrowserApp() {
+      if (Date.now() - lastActivateT < 3000) return;
+      lastActivateT = Date.now();
+      try {
+        Cc["@mozilla.org/widget/macdocksupport;1"].getService(Ci.nsIMacDockSupport).activateApplication(true);
+      } catch (e) {
+        log("could not activate the browser app: " + e, true);
+      }
+      try { win.focus(); } catch (e) {}
+      win.setTimeout(() => {
+        const a = Services.focus.activeWindow;
+        log("focus-other-apps: browser brought forward; active window is now " +
+          (a === win ? "the PiP" : a ? "another browser window (" + (a.location && a.location.href) + ")" : "none, the app is still in the background"));
+        if (a && a !== win) { try { win.focus(); } catch (e) {} } // make sure it's the PiP, not the main window
+      }, 150);
+    }
+
+    function noteBackground() {
+      if (Date.now() - lastSkipLogT < 5000) return;
+      lastSkipLogT = Date.now();
+      log("another app is frontmost: pinch can't reach the PiP and the cursor can't be hidden; " +
+        "scroll-to-move still works, and Option + two-finger scroll resizes");
+    }
+
+    function focusPip(byGesture) {
       const active = Services.focus.activeWindow;
       if (active === win) return;
       if (!active) {
-        // macOS gives pinches (and cursor control) only to the frontmost app, so there's nothing to do.
-        if (Date.now() - lastSkipLogT > 5000) {
-          lastSkipLogT = Date.now();
-          log("another app is frontmost: pinch can't reach the PiP and the cursor can't be hidden; " +
-            "scroll-to-move still works, and Option + two-finger scroll resizes");
+        if (byGesture && pref("focusOtherApps")) {
+          activateBrowserApp();
+          return;
         }
+        noteBackground();
         return;
       }
       if (Date.now() - lastKeyT < 1500) {
@@ -846,11 +876,20 @@
         lastPipMoveT = Date.now();
         lastMouse = [e.screenX, e.screenY];
       }
-      if (hoverTimer || !pref("focusOnHover")) return;
-      if (Services.focus.activeWindow === win) return; // already focused (also covers the user clicking it)
+      // Only a gesture (not mere hovering) is allowed to pull the browser forward over another app.
+      if (e && e.type === "wheel") gestureWanted = true;
+      if (hoverTimer) return;
+      const active = Services.focus.activeWindow;
+      if (active === win) return; // already focused (also covers the user clicking it)
+      if (!(active ? pref("focusOnHover") : gestureWanted && pref("focusOtherApps"))) {
+        if (!active) noteBackground();
+        return;
+      }
       hoverTimer = win.setTimeout(() => { // a short dwell so merely passing over the window doesn't flicker focus
         hoverTimer = null;
-        focusPip();
+        const byGesture = gestureWanted;
+        gestureWanted = false;
+        focusPip(byGesture);
       }, 50);
     }
 
@@ -976,5 +1015,5 @@
   try {
     P.setCharPref("zen.pipgestures.loaded", new Date().toISOString());
   } catch (e) {}
-  log("PiP Gestures v0.5.4 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
+  log("PiP Gestures v0.6.0 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
 })();

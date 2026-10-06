@@ -11,7 +11,7 @@ macOS only sends pinch gestures to the focused window, so while your cursor rest
 
 ### When another app is in front
 
-macOS only delivers pinch gestures to the active app, and only the active app can hide the cursor. So with another app in front of the browser, two-finger scrolling still moves the PiP, but pinching can't reach it and the cursor stays visible. **Hold Option and two-finger scroll** to resize instead; that works whether or not the browser or the PiP is focused (fingers up = bigger).
+macOS only delivers pinch gestures to the active app, and only the active app can hide the cursor. So when you start moving or resizing a PiP while another app is in front, the browser is brought forward and the PiP focused (like Dia does), and from then on pinch and cursor hiding work as usual. Hovering alone never does this. This can also raise the main browser window; turn off "When another app is in front, bring the browser forward" if you'd rather it didn't, in which case two-finger scrolling still moves the PiP and **Option + two-finger scroll** resizes it (fingers up = bigger) without needing any focus.
 
 ## Gummy mode
 
@@ -37,6 +37,7 @@ Open the mod's settings on the Sine mods page. Changes apply instantly. Every se
 | Move speed (%) | `panSpeed` | 100 |
 | Resize by pinching | `enablePinch` | on |
 | Focus the PiP while hovering it (so pinch works unfocused) | `focusOnHover` | on |
+| Bring the browser forward when you gesture while another app is in front | `focusOtherApps` | on |
 | Resize with Option + two-finger scroll | `altResize` | on |
 | Pinch speed (%) | `pinchSpeed` | 100 |
 | Smallest width when pinching in (px) | `minWidth` | 200 |
