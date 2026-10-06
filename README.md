@@ -58,6 +58,10 @@ Turn on **Debug mode**, reproduce the problem, and open the Browser Console (`Cm
 
 A trackpad sends no events while your fingers rest, so the mod can't tell resting from lifting. After a flick it notices the momentum fading and gives the cursor back right away; after a slow stop it waits for the "rest time" setting.
 
+## Releasing updates (for contributors)
+
+Sine decides whether a mod needs updating by comparing the `updatedAt` date in `theme.json` with the one stored in the installed copy (the `version` number isn't compared). **Don't put `updatedAt` in `theme.json`**: when it's missing, Sine uses the repository's last-push time from the GitHub API, so every push is picked up automatically. A fixed `updatedAt` means Sine never sees an update. Sine checks once when the browser starts, and changes to the `.uc.js` script only take effect after a restart.
+
 ## Adding a setting (for contributors)
 
 1. Add it to `DEFAULTS` at the top of `pip-gestures.uc.js`. The value's type (boolean or integer) is the pref's type.
