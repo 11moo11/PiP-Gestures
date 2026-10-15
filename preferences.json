@@ -143,6 +143,12 @@
     "label": "Reverse the mouse wheel direction (scroll up = smaller)"
   },
   {
+    "type": "checkbox",
+    "property": "zen.pipgestures.wheelAlways",
+    "defaultValue": false,
+    "label": "I use a mouse, not a trackpad: treat every scroll over the PiP as a mouse wheel (use this if the wheel moves the window instead of resizing it, e.g. with a smooth-scrolling mouse)"
+  },
+  {
     "type": "dropdown",
     "property": "zen.pipgestures.minWidth",
     "label": "Smallest window width when pinching in",

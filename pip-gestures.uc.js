@@ -34,6 +34,7 @@
     wheelResize: true,  // a mouse wheel over the PiP resizes it (scroll up = bigger, scroll down = smaller)
     wheelSpeed: 100,    // % - how much each wheel notch resizes
     wheelInvert: false, // reverse the wheel direction
+    wheelAlways: false, // treat every scroll as a mouse wheel (for desktops with no trackpad)
     altResize: true,    // Option + two-finger scroll also resizes the window (works even when another app is frontmost)
     gummy: false,       // goofy gummy mode: the window peels, stretches, bounces and wobbles
     gummyStretch: 100,  // % - how far the trailing sides peel back when you move fast
@@ -123,7 +124,8 @@
   // <wheel>
   // A trackpad (and Magic Mouse) reports precise, pixel-based scroll deltas; a classic wheel mouse reports
   // line- or page-based ones. That's how the two are told apart.
-  const isMouseWheel = (e) => e.deltaMode === 1 || e.deltaMode === 2;
+  // `always` forces it for setups where the device can't be told apart (or there is no trackpad).
+  const isMouseWheel = (e, always) => !!always || e.deltaMode === 1 || e.deltaMode === 2;
 
   // Size factor for one wheel event: scrolling up (negative deltaY) grows the window, down shrinks it.
   // `speed` is 1 at the default setting. One notch (about 3 lines) is roughly +/-11%; the factor is
@@ -757,7 +759,7 @@
       // Resizing comes from a pinch (ctrl+wheel) or, as a fallback that macOS delivers even when another
       // app is frontmost, Option + two-finger scroll.
       // A classic mouse wheel resizes too (scroll up = bigger); it works regardless of focus, like any scroll.
-      const wheelResize = !e.ctrlKey && isMouseWheel(e) && pref("wheelResize");
+      const wheelResize = !e.ctrlKey && isMouseWheel(e, pref("wheelAlways")) && pref("wheelResize");
       const altResize = !e.ctrlKey && !wheelResize && e.altKey && pref("altResize");
       const resizing = e.ctrlKey || altResize || wheelResize;
       if (!wheelResize && !pref(resizing ? "enablePinch" : "enableMove")) return;
@@ -778,7 +780,8 @@
         // changes, no hiding or carrying the cursor. Scale around the cursor so the spot under it stays put.
         const f = wheelResizeFactor(e.deltaY, e.deltaMode, pref("wheelSpeed") / 100, pref("wheelInvert"));
         if (wheelLogs++ < 12) {
-          log("wheel resize: deltaY=" + e.deltaY + " mode=" + e.deltaMode + " factor=" + f.toFixed(3));
+          log("wheel resize: deltaY=" + e.deltaY + " mode=" + e.deltaMode + " factor=" + f.toFixed(3) +
+            (pref("wheelAlways") ? " (forced by the 'every scroll is a mouse wheel' setting)" : ""));
         }
         resizeBy(f, [e.screenX, e.screenY]);
         // Growing near a screen edge can push the window so the cursor is left outside it; keep it over

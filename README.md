@@ -4,7 +4,7 @@ Two-finger move and pinch-to-resize for Picture-in-Picture windows in [Zen Brows
 
 - **Two-finger scroll** over a PiP window moves the window. It keeps coasting after you lift your fingers.
 - **Pinch** resizes the window around its center and keeps the aspect ratio.
-- **Mouse wheel** over a PiP window resizes it: scroll up = bigger, scroll down = smaller. It scales around the cursor, keeps the aspect ratio, and works whether or not the browser or the PiP is focused. (A trackpad or Magic Mouse reports smooth scrolling and moves the window instead; a classic wheel mouse is what resizes.)
+- **Mouse wheel** over a PiP window resizes it: scroll up = bigger, scroll down = smaller. It scales around the cursor, keeps the aspect ratio, and works whether or not the browser or the PiP is focused. (A trackpad or Magic Mouse reports smooth scrolling and moves the window instead; a classic wheel mouse is what resizes. This works on Windows too. If your mouse is reported as smooth scrolling, turn on "I use a mouse, not a trackpad".)
 - The cursor hides while you gesture and travels with the window, then comes back at the window's center.
 - The window stops at screen edges that have no other monitor beyond them, so it can't be clipped. Edges that border another monitor stay open.
 
@@ -42,6 +42,7 @@ Open the mod's settings on the Sine mods page. Changes apply instantly. Every se
 | Resize with the mouse wheel | `wheelResize` | on |
 | Mouse wheel resize speed (%) | `wheelSpeed` | 100 |
 | Reverse the mouse wheel direction | `wheelInvert` | off |
+| Treat every scroll as a mouse wheel | `wheelAlways` | off |
 | Resize with Option + two-finger scroll | `altResize` | on |
 | Pinch speed (%) | `pinchSpeed` | 100 |
 | Smallest width when pinching in (px) | `minWidth` | 200 |
