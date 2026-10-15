@@ -31,6 +31,9 @@
     holdMs: 600,        // ms - how long resting fingers can pause mid-move before the cursor returns
     focusOnHover: true, // focus the PiP while the cursor is over it, so pinch works without clicking it first
     focusOtherApps: true, // when another app is frontmost, bring the browser forward as soon as you move/resize the PiP
+    wheelResize: true,  // a mouse wheel over the PiP resizes it (scroll up = bigger, scroll down = smaller)
+    wheelSpeed: 100,    // % - how much each wheel notch resizes
+    wheelInvert: false, // reverse the wheel direction
     altResize: true,    // Option + two-finger scroll also resizes the window (works even when another app is frontmost)
     gummy: false,       // goofy gummy mode: the window peels, stretches, bounces and wobbles
     gummyStretch: 100,  // % - how far the trailing sides peel back when you move fast
@@ -115,6 +118,22 @@
   }
 
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+  // ---- Mouse wheel (pure functions, no DOM) -------------------------------------------------
+  // <wheel>
+  // A trackpad (and Magic Mouse) reports precise, pixel-based scroll deltas; a classic wheel mouse reports
+  // line- or page-based ones. That's how the two are told apart.
+  const isMouseWheel = (e) => e.deltaMode === 1 || e.deltaMode === 2;
+
+  // Size factor for one wheel event: scrolling up (negative deltaY) grows the window, down shrinks it.
+  // `speed` is 1 at the default setting. One notch (about 3 lines) is roughly +/-11%; the factor is
+  // limited so a fast spin can't jump the window across the screen in a single event.
+  function wheelResizeFactor(deltaY, deltaMode, speed, invert) {
+    const lines = deltaMode === 2 ? deltaY * 10 : deltaMode === 0 ? deltaY / 16 : deltaY;
+    const dir = invert ? 1 : -1;
+    return clamp(Math.exp(dir * lines * 0.035 * speed), 0.7, 1.4);
+  }
+  // </wheel>
 
   // ---- Gummy physics (pure functions, no DOM) ------------------------------------------------
   // The window is modelled as a rigid "body" (the rect the fingers and momentum drive) plus four
@@ -344,8 +363,8 @@
     // devicePixelRatio is the device-pixels-per-CSS-pixel we actually need.
     let lastWarp = null;
     const warpHistory = []; // recent cursor positions we asked for (our own moves echo back as mousemoves)
-    function warpCursor(cx, cy) {
-      if (!pref("hideCursor")) return;
+    function warpCursor(cx, cy, force) {
+      if (!force && !pref("hideCursor")) return;
       try {
         const scale = win.devicePixelRatio || 1;
         lastWarp = [Math.round(cx), Math.round(cy)];
@@ -625,14 +644,23 @@
     }
 
     // Resize by `factor` around the window's centre.
-    function resizeBy(factor) {
+    // `anchor` ([x, y] in screen px) is the point that stays put while the window scales; by default it's
+    // the window's centre. The mouse wheel anchors on the cursor so the picture under it doesn't move.
+    function resizeBy(factor, anchor) {
       sync();
       const minW = pref("minWidth");
       const maxW = pref("keepOnScreen") ? windowBounds().maxW : Infinity;
       const newW = clamp(g.w * factor, minW, Math.max(minW, maxW));
       const newH = newW / g.aspect;
-      g.x -= (newW - g.w) / 2;
-      g.y -= (newH - g.h) / 2;
+      if (anchor) {
+        const kx = newW / g.w;
+        const ky = newH / g.h;
+        g.x = anchor[0] - (anchor[0] - g.x) * kx;
+        g.y = anchor[1] - (anchor[1] - g.y) * ky;
+      } else {
+        g.x -= (newW - g.w) / 2;
+        g.y -= (newH - g.h) / 2;
+      }
       g.w = newW;
       g.h = newH;
       commit(true);
@@ -723,13 +751,16 @@
     // window, so for an unfocused PiP it arrives via the browser-window listener further down and is
     // handed to this function through win.__pipGesturesController.
     let altResizeT = 0; // last Option+scroll resize event
+    let wheelLogs = 0;
     function onWheel(e) {
       // A gesture that's switched off is left completely alone (default behaviour applies).
       // Resizing comes from a pinch (ctrl+wheel) or, as a fallback that macOS delivers even when another
       // app is frontmost, Option + two-finger scroll.
-      const altResize = !e.ctrlKey && e.altKey && pref("altResize");
-      const resizing = e.ctrlKey || altResize;
-      if (!pref(resizing ? "enablePinch" : "enableMove")) return;
+      // A classic mouse wheel resizes too (scroll up = bigger); it works regardless of focus, like any scroll.
+      const wheelResize = !e.ctrlKey && isMouseWheel(e) && pref("wheelResize");
+      const altResize = !e.ctrlKey && !wheelResize && e.altKey && pref("altResize");
+      const resizing = e.ctrlKey || altResize || wheelResize;
+      if (!wheelResize && !pref(resizing ? "enablePinch" : "enableMove")) return;
       // If Option is released while the swipe's momentum is still fading, those leftover events arrive
       // as plain scrolls; swallow them instead of letting them fling the window sideways.
       const tAlt = Date.now();
@@ -740,9 +771,24 @@
         return;
       }
       if (altResize) altResizeT = tAlt;
-      hoverEnter(e); // scrolls reach an unfocused PiP, so this is a reliable "the cursor is here" signal
       e.preventDefault();
       e.stopPropagation();
+      if (wheelResize) {
+        // The user's hand is on the mouse, so none of the trackpad-gesture machinery applies: no focus
+        // changes, no hiding or carrying the cursor. Scale around the cursor so the spot under it stays put.
+        const f = wheelResizeFactor(e.deltaY, e.deltaMode, pref("wheelSpeed") / 100, pref("wheelInvert"));
+        if (wheelLogs++ < 12) {
+          log("wheel resize: deltaY=" + e.deltaY + " mode=" + e.deltaMode + " factor=" + f.toFixed(3));
+        }
+        resizeBy(f, [e.screenX, e.screenY]);
+        // Growing near a screen edge can push the window so the cursor is left outside it; keep it over
+        // the PiP so the next notch still lands there.
+        const nx = clamp(e.screenX, g.x + 4, g.x + g.w - 4);
+        const ny = clamp(e.screenY, g.y + 4, g.y + g.h - 4);
+        if (nx !== e.screenX || ny !== e.screenY) warpCursor(nx, ny, true);
+        return;
+      }
+      hoverEnter(e); // scrolls reach an unfocused PiP, so this is a reliable "the cursor is here" signal
       const mag = resizing ? Math.abs(e.deltaY) : Math.hypot(e.deltaX, e.deltaY);
       lastWheelT = Date.now();
       // Gummy: while a throw is in flight, the trackpad's leftover momentum events are ignored. A
@@ -1015,5 +1061,5 @@
   try {
     P.setCharPref("zen.pipgestures.loaded", new Date().toISOString());
   } catch (e) {}
-  log("PiP Gestures v0.6.0 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
+  log("PiP Gestures v0.7.0 loaded. Debug is " + (debugOn() ? "ON" : "OFF"), true);
 })();
